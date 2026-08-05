@@ -9,8 +9,6 @@ from typing import Any
 
 import streamlit as st
 
-from batch_label_extractor import TTBCOLADocumentExtractor, pil_to_bgr
-from cola_label_extractor import COLALabelExtractor, release_ocr_memory
 from label_validation import (
     FIELD_LABELS,
     PASS_THRESHOLD,
@@ -40,14 +38,18 @@ RESULT_FIELDS = (
 
 
 @st.cache_resource(show_spinner="Loading OCR models...")
-def get_single_extractor() -> COLALabelExtractor:
-    """Create one process-wide OCR reader reused across Streamlit reruns."""
+def get_single_extractor() -> Any:
+    """Lazily create one OCR reader only after validation is requested."""
+    from cola_label_extractor import COLALabelExtractor
+
     return COLALabelExtractor(gpu=False)
 
 
 @st.cache_resource(show_spinner="Loading batch extractor...")
-def get_batch_extractor() -> TTBCOLADocumentExtractor:
-    """Create one process-wide document extractor with persistent OCR caching."""
+def get_batch_extractor() -> Any:
+    """Lazily create the document extractor after batch processing is requested."""
+    from batch_label_extractor import TTBCOLADocumentExtractor
+
     return TTBCOLADocumentExtractor(
         cache_dir=Path(".cola_ocr_cache"),
         ocr_extractor=get_single_extractor(),
@@ -73,6 +75,7 @@ def decode_image_bytes(image_bytes: bytes) -> Any:
     from io import BytesIO
 
     from PIL import Image
+    from batch_label_extractor import pil_to_bgr
 
     with Image.open(BytesIO(image_bytes)) as image:
         return pil_to_bgr(image.copy())
@@ -82,6 +85,8 @@ def process_batch_uploads(
     uploaded_files: list[Any], entered_values: dict[str, str]
 ) -> list[dict[str, Any]]:
     """Extract and validate every uploaded document while retaining failures."""
+    from cola_label_extractor import release_ocr_memory
+
     extractor = get_batch_extractor()
     results: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="cola_streamlit_") as temporary_directory:
