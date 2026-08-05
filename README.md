@@ -195,13 +195,27 @@ Its output includes page provenance, confidence, conflict checks, missing-field
 notices, and a `review_required` flag. Supported raster
 formats include JPEG, PNG, TIFF, BMP, WebP, GIF, PPM/PGM/PBM, and JPEG 2000.
 
-For speed, deskew uses text detection without a redundant recognition pass and
-the batch entry point keeps one OCR model loaded. Exact-input results are cached
-under `.cola_ocr_cache`; the cache key includes the file contents, settings, and
-extractor source code, so changed inputs or code cannot reuse stale results. Use
-`--no-cache` to force OCR or `--cache-dir PATH` to choose another cache location.
-Decoded page arrays and native inference workspaces are released between pages
-and batch files so long-running public-cloud workers do not accumulate memory.
+## Validation performance optimizations
+
+The Streamlit page delays heavyweight OCR imports so the form can render first,
+then warms one EasyOCR reader in a background thread. Single and batch validation
+reuse that reader instead of loading separate models. CPU recognition processes
+two text crops at a time and uses at most two PyTorch threads; set the
+`COLA_OCR_THREADS` environment variable to `1` for a more memory-constrained host.
+
+Both validation modes share the content-addressed cache under `.cola_ocr_cache`.
+The cache key includes file contents, extraction settings, and extractor source
+code, so renaming a file can reuse valid OCR while changed inputs, settings, or
+code cannot return stale results. Cache lookup occurs before model loading, and
+Streamlit also retains recent single-image results in memory. Use `--no-cache`
+with the batch command to force OCR or `--cache-dir PATH` to select another cache
+location.
+
+Batch files remain sequential to control peak memory. Decoded pages and native
+inference workspaces are released between items, while detection and recognition
+use bounded canvases and batches. Consequently, a new image still incurs OCR
+time, but repeated content can return immediately without compromising field
+rules, confidence checks, or validation semantics.
 
 ## Streamlit validation application
 
