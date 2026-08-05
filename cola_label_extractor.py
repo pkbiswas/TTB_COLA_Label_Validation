@@ -373,9 +373,11 @@ def normalized_tokens(text: str) -> set[str]:
         "whiskev": "whiskey",
         "whiske": "whiskey",
         "whskey": "whiskey",
+        "hskey": "whiskey",
         "whiskcy": "whiskey",
         "straicht": "straight",
         "bourboh": "bourbon",
+        "bourbor": "bourbon",
         "alcoholie": "alcoholic",
         "machlnery": "machinery",
     }
@@ -457,6 +459,11 @@ BRAND_OCR_ALIASES = {
     "cunax": "Climax",
     "cimax": "Climax",
     "ctmnax": "Climax",
+    # Faint cursive text observed on winery labels; these repairs require the
+    # complete token and do not fuzzy-rewrite arbitrary brand words.
+    "casade": "Cascade",
+    "ieny": "Winery",
+    "ineny": "Winery",
 }
 
 
@@ -753,7 +760,7 @@ def correct_brand_from_repeated_text(text: str, lines: Sequence[OCRLine]) -> str
         corrected.append(best)
     normalized: list[str] = []
     for token in corrected:
-        prefix = re.sub(r"[^A-Za-z].*$", "", token).casefold()
+        prefix = re.sub(r"[^A-Za-z]", "", token).casefold()
         if prefix in BRAND_OCR_ALIASES:
             token = BRAND_OCR_ALIASES[prefix]
         elif token.isalpha() and not (token.islower() or token.isupper() or token.istitle()):
@@ -846,6 +853,11 @@ def extract_brand(
             flags=re.IGNORECASE,
         )
     )
+    brand = re.sub(
+        r"\b((?i:winery|distillery|brewery|brewing))\s+([A-Z]{2,4})(?=\s)",
+        r"\1 (\2)",
+        brand,
+    )
     conf = weighted_mean(
         [central_brand_text(line, image_width)[1] for line in selected],
         [max(1, len(central_brand_text(line, image_width)[0])) for line in selected],
@@ -874,20 +886,31 @@ class COLALabelExtractor:
         log_ocr_stage("reader ready")
 
     def _ocr(self, image: np.ndarray) -> list[OCRWord]:
-        """Run one full-resolution OCR pass with bounded CPU parallelism."""
-        result = self.reader.readtext(
+        """Detect bounded-size text boxes, then recognize original-image crops."""
+        horizontal_lists, free_lists = self.reader.detect(
             image,
-            detail=1,
-            paragraph=False,
-            decoder="greedy",
-            # One crop per recognition batch keeps peak RAM within public-cloud
-            # limits without changing the OCR model or field parsing rules.
-            batch_size=1,
-            workers=0,
-            mag_ratio=2.0,
-            canvas_size=3000,
+            min_size=20,
             text_threshold=0.60,
             low_text=0.30,
+            canvas_size=2000,
+            mag_ratio=1.5,
+        )
+        horizontal_list = horizontal_lists[0] if horizontal_lists else []
+        free_list = free_lists[0] if free_lists else []
+        log_ocr_stage(
+            f"recognition boxes ready; horizontal={len(horizontal_list)}; "
+            f"rotated={len(free_list)}"
+        )
+        gc.collect()
+        result = self.reader.recognize(
+            image,
+            horizontal_list=horizontal_list,
+            free_list=free_list,
+            decoder="greedy",
+            batch_size=1,
+            workers=0,
+            detail=1,
+            paragraph=False,
         )
         return easyocr_to_words(result)
 
