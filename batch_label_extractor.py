@@ -267,7 +267,9 @@ class TTBCOLADocumentExtractor:
     @property
     def ocr(self) -> Any:
         """Load EasyOCR only after an exact-input cache miss."""
-        if self._ocr is None:
+        if callable(self._ocr):
+            self._ocr = self._ocr()
+        elif self._ocr is None:
             from cola_label_extractor import COLALabelExtractor
 
             self._ocr = COLALabelExtractor(languages=self.languages, gpu=self.gpu)

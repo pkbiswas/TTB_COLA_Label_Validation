@@ -74,7 +74,7 @@ def get_batch_extractor() -> Any:
 
     return TTBCOLADocumentExtractor(
         cache_dir=Path(".cola_ocr_cache"),
-        ocr_extractor=get_single_extractor(),
+        ocr_extractor=get_single_extractor,
     )
 
 
@@ -87,32 +87,23 @@ def flatten_detailed_result(result: dict[str, Any]) -> dict[str, Any]:
     return flattened
 
 
-def decode_uploaded_image(uploaded_file: Any) -> Any:
-    """Decode a Streamlit upload as a Pillow image and convert it to OpenCV BGR."""
-    return decode_image_bytes(uploaded_file.getvalue())
-
-
-def decode_image_bytes(image_bytes: bytes) -> Any:
-    """Decode encoded image bytes and convert the result to OpenCV BGR."""
-    from io import BytesIO
-
-    from PIL import Image
-    from batch_label_extractor import pil_to_bgr
-
-    with Image.open(BytesIO(image_bytes)) as image:
-        return pil_to_bgr(image.copy())
-
-
 @st.cache_data(show_spinner=False, max_entries=32)
 def extract_single_image(
-    image_bytes: bytes, extractor_signature: str
+    image_bytes: bytes, filename: str, extractor_signature: str
 ) -> dict[str, Any]:
-    """Cache OCR by image content and extractor-code fingerprint."""
+    """Use the shared document cache and return the first page's OCR details."""
     del extractor_signature  # Its value participates in Streamlit's cache key.
-    image = decode_image_bytes(image_bytes)
-    return get_single_extractor().extract_image(
-        image, detailed=True, include_raw_text=True
-    )
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {f".{item}" for item in SINGLE_IMAGE_TYPES}:
+        suffix = ".png"
+    with tempfile.TemporaryDirectory(prefix="cola_single_") as temporary_directory:
+        input_path = Path(temporary_directory) / f"uploaded{suffix}"
+        input_path.write_bytes(image_bytes)
+        document = get_batch_extractor().extract(input_path, include_pages=True)
+    pages = document.get("pages", [])
+    if not pages:
+        raise ValueError("No readable label page was found in the uploaded image.")
+    return pages[0]
 
 
 def process_batch_uploads(
@@ -351,7 +342,9 @@ def main() -> None:
                 with st.spinner("Extracting and validating label text..."):
                     from batch_label_extractor import pipeline_signature
 
-                    detailed = extract_single_image(source_bytes, pipeline_signature())
+                    detailed = extract_single_image(
+                        source_bytes, source_name or "uploaded.png", pipeline_signature()
+                    )
                     extracted = flatten_detailed_result(detailed)
                     validation_rows = validate_label_fields(entered, extracted)
                     st.session_state["single_validation"] = {
