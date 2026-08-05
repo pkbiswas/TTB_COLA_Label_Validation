@@ -1,0 +1,18 @@
+# Python and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local OCR results and logs
+.cola_ocr_cache/
+*.log
+
+# Local Streamlit secrets must never be committed
+.streamlit/secrets.toml
+
+# Editor and operating-system metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
