@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import gc
 import json
 import math
+import os
 import re
 import statistics
 import sys
@@ -21,8 +23,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+# Bound native CPU thread pools before OpenCV/PyTorch initialize. Parallel
+# inference workspaces can exceed the RAM available to public Streamlit workers.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 import cv2
 import numpy as np
+import torch
 
 try:
     import easyocr
@@ -44,6 +52,12 @@ CANONICAL_GOVERNMENT_WARNING = (
     "defects. (2) Consumption of alcoholic beverages impairs your ability to "
     "drive a car or operate machinery, and may cause health problems."
 )
+
+
+def log_ocr_stage(message: str) -> None:
+    """Write a flushed, text-free OCR stage marker for cloud diagnostics."""
+    print(f"[COLA OCR] {message}", file=sys.stderr, flush=True)
+
 
 CATEGORY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("kentucky", "straight", "bourbon", "whiskey"), "Kentucky Straight Bourbon Whiskey"),
@@ -844,10 +858,23 @@ class COLALabelExtractor:
 
     def __init__(self, languages: Sequence[str] = ("en",), gpu: bool | str = False) -> None:
         """Initialize one reusable EasyOCR reader for the selected languages."""
+        if gpu is False:
+            torch.set_num_threads(1)
+            try:
+                torch.set_num_interop_threads(1)
+            except RuntimeError:
+                # PyTorch permits this setting only before inter-op work starts;
+                # a previously constructed reader has already applied it.
+                pass
+        log_ocr_stage(
+            f"initializing reader; torch={torch.__version__}; gpu={gpu}; "
+            f"threads={torch.get_num_threads()}"
+        )
         self.reader = easyocr.Reader(list(languages), gpu=gpu, verbose=False)
+        log_ocr_stage("reader ready")
 
     def _ocr(self, image: np.ndarray) -> list[OCRWord]:
-        """Run the configured high-resolution recognition pass on one image."""
+        """Run one full-resolution OCR pass with bounded CPU parallelism."""
         result = self.reader.readtext(
             image,
             detail=1,
@@ -858,7 +885,7 @@ class COLALabelExtractor:
             batch_size=1,
             workers=0,
             mag_ratio=2.0,
-            canvas_size=2400,
+            canvas_size=3000,
             text_threshold=0.60,
             low_text=0.30,
         )
@@ -918,8 +945,12 @@ class COLALabelExtractor:
         elif image.shape[2] == 4:
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         image = prepare_for_ocr(image)
+        log_ocr_stage(f"prepared image {image.shape[1]}x{image.shape[0]}")
         if rotation == "auto":
             angle = self._detect_angle(image)
+            # Drop text-detection intermediates before the full OCR pass. This
+            # matters in memory-constrained, long-lived Streamlit workers.
+            gc.collect()
         else:
             angle = float(rotation)
 
@@ -929,7 +960,12 @@ class COLALabelExtractor:
             ocr_image = rotate_bound(image, angle)
         else:
             ocr_image = image
+        log_ocr_stage(
+            f"deskew complete; angle={angle}; OCR image "
+            f"{ocr_image.shape[1]}x{ocr_image.shape[0]}"
+        )
         words = self._ocr(ocr_image)
+        log_ocr_stage(f"recognition complete; words={len(words)}")
 
         lines = words_to_lines(words)
         category = extract_category(lines)

@@ -97,8 +97,9 @@ python -m pip install -r requirements.txt
 EasyOCR downloads its English model on first use. Later runs use the local
 model cache. On CPU, a high-resolution image usually takes tens of seconds;
 an angled image takes two passes because the first pass estimates deskew.
-The dependency file selects CPU-only PyTorch builds and the OCR recognition
-batch is memory-bounded so the application can run within public-cloud limits.
+The dependency file selects CPU-only PyTorch builds. OCR retains full image
+resolution while limiting recognition batches and native CPU thread pools to
+bound peak memory without changing label layout or small regulatory text.
 
 ## Run
 
