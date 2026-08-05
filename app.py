@@ -101,7 +101,6 @@ def extract_single_image(
     image_bytes: bytes, filename: str, extractor_signature: str
 ) -> dict[str, Any]:
     """Use the shared document cache and return the first page's OCR details."""
-    del extractor_signature  # Its value participates in Streamlit's cache key.
     suffix = Path(filename).suffix.lower()
     if suffix not in {f".{item}" for item in SINGLE_IMAGE_TYPES}:
         suffix = ".png"
