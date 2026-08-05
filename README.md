@@ -1,5 +1,7 @@
 # COLA beverage-label OCR
 
+**Live application:** [Test the TTB COLA Label Validator](https://ttb-cola-label-validation.streamlit.app/)
+
 ## Public deployment
 
 This folder is a self-contained Git repository payload for the Streamlit label
@@ -8,6 +10,9 @@ public Git repository. In Streamlit Community Cloud, create an app from that
 repository, select `app.py` as the entry point, and deploy. The platform installs
 the Python packages from `requirements.txt`; EasyOCR downloads its English model
 the first time the application initializes.
+
+The deployed public application is available at
+[https://ttb-cola-label-validation.streamlit.app/](https://ttb-cola-label-validation.streamlit.app/).
 
 To verify the deployment package locally before pushing it:
 
