@@ -454,9 +454,23 @@ VOLUME_RE = re.compile(
 # decorative winery/distillery name from being duplicated as the producer when
 # the label never identifies that organization in a production role.
 BOTTLER_PRODUCER_RE = re.compile(
-    r"\b(?:produced|bottled|distilled|brewed|vinted|cellared|manufactured|made|crafted)"
-    r"(?:\s*(?:,|and|&)\s*(?:produced|bottled|distilled|brewed|vinted|cellared|manufactured|made|crafted))*"
-    r"\s+by\s*:?[\s-]*(?P<entity>.+)",
+    r"\b(?:produced|bott?i?led|distilled|brewed|vinted|cellared|manufactured|made|crafted)"
+    r"(?:[\s.,=|:&/-]+(?:and|&)?\s*(?:produced|bott?i?led|distilled|brewed|vinted|cellared|manufactured|made|crafted))*"
+    r"[\s.,=|:&/-]+by\b\s*:?\s*[=-]*\s*(?P<entity>.+)",
+    re.IGNORECASE,
+)
+ROLE_WORD_RE = re.compile(
+    r"\b(?:produced|bott?i?led|distilled|brewed|vinted|cellared|manufactured|made|crafted)\b",
+    re.IGNORECASE,
+)
+LOCATION_RE = re.compile(
+    r"^[A-Za-z .'-]+,\s*(?:[A-Z]{2}|Alabama|Alaska|Arizona|Arkansas|California|Colorado|"
+    r"Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|"
+    r"Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|"
+    r"Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|"
+    r"North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|"
+    r"South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|"
+    r"West Virginia|Wisconsin|Wyoming)(?:\s+\d{5}(?:-\d{4})?)?$",
     re.IGNORECASE,
 )
 COUNTRY_ORIGIN_RE = re.compile(
@@ -688,9 +702,85 @@ def clean_entity_text(text: str) -> str:
     return entity
 
 
+def spatial_role_blocks(
+    lines: Sequence[OCRLine],
+) -> list[tuple[float, str, str | None, str]]:
+    """Read company and location boxes below a production-role anchor column."""
+    words = [word for line in lines for word in line.words]
+    blocks: list[tuple[float, str, str | None, str]] = []
+    for role in words:
+        if not ROLE_WORD_RE.search(role.text):
+            continue
+        same_row = [
+            word
+            for word in words
+            if word is not role
+            and word.left >= role.left
+            and word.left <= role.right + max(80.0, role.width * 1.5)
+            and abs(word.center_y - role.center_y) <= 0.7 * max(role.height, word.height)
+            and re.search(r"\bby\b", word.text, re.IGNORECASE)
+        ]
+        role_has_by = re.search(r"\bby\b", role.text, re.IGNORECASE)
+        if not same_row and not role_has_by:
+            continue
+        by_word = min(same_row, key=lambda word: word.left) if same_row else role
+        anchor_left = min(role.left, by_word.left)
+        anchor_right = max(role.right, by_word.right)
+        margin = max(25.0, (anchor_right - anchor_left) * 0.40)
+        below = sorted(
+            (
+                word
+                for word in words
+                if word not in {role, by_word}
+                and word.top
+                >= min(role.bottom, by_word.bottom) - 0.55 * max(role.height, by_word.height)
+                and word.top <= max(role.bottom, by_word.bottom) + max(180.0, role.height * 7.0)
+                and anchor_left - margin <= word.center_x <= anchor_right + margin
+                and word.confidence >= MIN_FIELD_CONFIDENCE
+            ),
+            key=lambda word: (word.top, word.left),
+        )
+        entity_word = next(
+            (
+                word
+                for word in below
+                if not LOCATION_RE.fullmatch(clean_spacing(word.text.strip(" `|")))
+                and not re.match(r"^[Â©O0]?\d{4}\b", word.text.strip())
+                and len(re.findall(r"[A-Za-z]+", word.text)) >= 2
+            ),
+            None,
+        )
+        if entity_word is None:
+            continue
+        entity = clean_spacing(entity_word.text.strip(" `|,;:"))
+        location_word = next(
+            (
+                word
+                for word in below
+                if word.top >= entity_word.top
+                and LOCATION_RE.fullmatch(clean_spacing(word.text.strip(" `|")))
+            ),
+            None,
+        )
+        location = (
+            clean_spacing(location_word.text.strip(" `|,;:")) if location_word else None
+        )
+        confidence = min(role.confidence, by_word.confidence, entity_word.confidence)
+        role_text = role.text if by_word is role else f"{role.text} {by_word.text}"
+        source = clean_spacing(
+            " ".join(
+                part for part in (role_text, entity, location or "") if part
+            )
+        )
+        blocks.append((confidence, entity, location, source))
+    return blocks
+
+
 def extract_bottler_producer(lines: Sequence[OCRLine]) -> FieldValue:
     """Extract an entity explicitly identified as producer, bottler, or maker."""
     candidates: list[tuple[float, str, str]] = []
+    for confidence, entity, _, source in spatial_role_blocks(lines):
+        candidates.append((min(1.0, confidence + 0.05), entity, source))
     for text, confidence in extraction_windows(lines):
         match = BOTTLER_PRODUCER_RE.search(text)
         if not match:
@@ -728,6 +818,9 @@ def extract_country_of_origin(lines: Sequence[OCRLine]) -> FieldValue:
         # Some domestic labels state origin through the producer/bottler address
         # rather than a separate country declaration. Preserve that location as
         # requested instead of inferring a country from the state abbreviation.
+        for confidence, _, location, source in spatial_role_blocks(lines):
+            if location:
+                candidates.append((min(1.0, confidence + 0.05), location, source))
         for text, confidence in extraction_windows(lines):
             role_match = BOTTLER_PRODUCER_RE.search(text)
             if not role_match:
@@ -813,6 +906,26 @@ def clean_brand_phrase(text: str) -> str:
     return text
 
 
+def largest_wordmark(lines: Sequence[OCRLine]) -> FieldValue:
+    """Return the largest concise non-regulatory OCR box as brand evidence."""
+    words = [word for line in lines for word in line.words]
+    candidates: list[tuple[float, OCRWord, str]] = []
+    for word in words:
+        text = word.text.strip(" -|_.,:;`\"")
+        tokens = normalized_tokens(text)
+        if not 1 <= len(tokens) <= 4 or len(text) < 3:
+            continue
+        if EXCLUDE_FROM_BRAND.search(text) or len(tokens.intersection(CATEGORY_VOCABULARY)) >= 2:
+            continue
+        score = word.width * word.height * max(0.20, word.confidence)
+        candidates.append((score, word, text))
+    if not candidates:
+        return FieldValue(None, 0.0, None)
+    _, word, text = max(candidates, key=lambda item: item[0])
+    corrected = correct_brand_from_repeated_text(text, lines)
+    return FieldValue(corrected, word.confidence, word.text)
+
+
 def extract_brand(
     lines: Sequence[OCRLine],
     image_height: int,
@@ -886,6 +999,13 @@ def extract_brand(
         [central_brand_text(line, image_width)[1] for line in selected],
         [max(1, len(central_brand_text(line, image_width)[0])) for line in selected],
     )
+    wordmark = largest_wordmark(lines)
+    if (
+        wordmark.value
+        and len(normalized_tokens(brand)) >= 5
+        and len(normalized_tokens(wordmark.value)) <= 4
+    ):
+        return wordmark
     return FieldValue(brand or None, conf, brand or None)
 
 
@@ -1002,6 +1122,14 @@ class COLALabelExtractor:
             release_ocr_memory()
         else:
             angle = float(rotation)
+
+        # Wide COLA artwork often contains several horizontal label columns;
+        # their polygons can produce a small false skew. Require stronger
+        # evidence before rotating a wide panel, while retaining bottle-photo
+        # correction and large-angle handling.
+        minimum_auto_angle = 8.0 if image.shape[1] / image.shape[0] >= 1.5 else 2.0
+        if rotation == "auto" and abs(angle) < minimum_auto_angle:
+            angle = 0.0
 
         # Positive polygon slope is corrected by the same signed OpenCV angle.
         # Detection-only deskew ensures there is exactly one recognition pass.

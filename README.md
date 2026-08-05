@@ -43,10 +43,12 @@ of being silently invented.
   interpolation to bound memory and processing time.
 - **Angles and rotation:** A fast text-detection pass estimates the dominant
   label angle from OCR polygons using a confidence- and width-weighted median.
-  The estimate is deliberately conservative for curved bottles. Images skewed
-  by at least two degrees are rotated on an expanded white canvas so text is not
-  cropped, followed by one full recognition pass. A manual `--rotation` value is
-  available when automatic deskew is insufficient.
+  The estimate is deliberately conservative for curved bottles. Supported skew
+  is corrected on an expanded white canvas so text is not cropped, followed by
+  one full recognition pass. Portrait and bottle images use
+  a two-degree correction threshold; wide multi-column panels require eight
+  degrees to avoid false rotation from unrelated columns. A manual `--rotation`
+  value is available when automatic deskew is insufficient.
 - **Low contrast and small text:** OCR runs at increased magnification and canvas
   resolution, with a lower secondary text-detection threshold for faint text.
   EasyOCR also retries low-contrast text regions with contrast adjustment. OCR
