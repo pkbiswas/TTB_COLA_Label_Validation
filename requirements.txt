@@ -1,3 +1,6 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0+cpu
+torchvision==0.28.0+cpu
 easyocr>=1.7.2,<2
 numpy>=1.26,<3
 opencv-python-headless>=4.9,<5

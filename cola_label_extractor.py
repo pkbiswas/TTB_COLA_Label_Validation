@@ -853,10 +853,12 @@ class COLALabelExtractor:
             detail=1,
             paragraph=False,
             decoder="greedy",
-            batch_size=4,
+            # One crop per recognition batch keeps peak RAM within public-cloud
+            # limits without changing the OCR model or field parsing rules.
+            batch_size=1,
             workers=0,
             mag_ratio=2.0,
-            canvas_size=3000,
+            canvas_size=2400,
             text_threshold=0.60,
             low_text=0.30,
         )
