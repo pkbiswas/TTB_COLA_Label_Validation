@@ -86,6 +86,81 @@ field can be compared and every comparable field scores at least 85%; otherwise
 it fails. Missing entered or extracted values remain visible but are not included
 in the threshold calculation.
 
+## Assumptions and limitations
+
+The implementation relies on the following assumptions:
+
+- **Document scope:** Inputs are images or documents of alcoholic-beverage labels
+  associated with the TTB COLA process. The parser is tuned to common U.S.
+  beverage-label vocabulary and regulatory layout, not arbitrary product images.
+- **Language and characters:** The application uses English OCR by default and
+  assumes the target fields are printed with Latin characters. Other EasyOCR
+  languages can be configured through the Python or command-line APIs, but the
+  Streamlit form currently uses English.
+- **Image evidence:** At least part of each requested field must be visible,
+  legible, and present in the submitted front/back label material. Text fully
+  hidden by glare, blur, curvature, shadows, cropping, or overprinting cannot be
+  recovered reliably and is returned as missing or low confidence.
+- **Image correction:** Automatic deskew relies on credible text polygons between
+  approximately 2 and 40 degrees and applies a conservative correction. More
+  extreme, vertical, or inconsistent orientations may require the CLI's manual
+  `--rotation` option. The code intentionally avoids global sharpening,
+  binarization, denoising, and synthetic glare removal that could alter printed
+  characters or numbers.
+- **OCR confidence:** EasyOCR confidence is treated as evidence quality, not a
+  probability that a field is legally correct. Field candidates below 0.25 are
+  generally excluded, and document-level values below the default 0.55 review
+  threshold are flagged for review.
+- **Brand and class:** Brand text is assumed to be visually prominent and usually
+  located in the central label region. Category/class extraction uses a finite,
+  ordered vocabulary plus conservative corrections for observed OCR errors;
+  an unlisted or unusually worded class may remain unclassified.
+- **Producer/bottler:** A company is extracted only when an explicit role phrase
+  such as “produced by,” “bottled by,” or “distilled by” supports it. An
+  importer-only statement is not assumed to identify the producer or bottler.
+- **Origin semantics:** An explicit “product of,” “made in,” or similar origin
+  statement is preferred. If none exists, `country_of_origin` may contain the
+  city/state/postal location attached to the producer/bottler statement, as
+  requested by this project; the code does not infer a country from a U.S. state.
+- **Alcohol measurements:** ABV must be in the plausible range 0.1–100%, and proof
+  must be in the range 1–200. Missing proof is not calculated from ABV, and
+  missing ABV is not calculated from proof. When both are printed, a difference
+  greater than one proof unit from twice the ABV is flagged for review.
+- **Volume:** A volume must include a recognizable unit such as ml, cl, L, or
+  fluid ounces. Common standard ml sizes receive a ranking bonus when OCR
+  produces several candidates, but nonstandard printed sizes are still allowed.
+  Units are normalized for display but quantities are not converted.
+- **Government warning:** A warning anchor must be detected before warning text is
+  returned. The canonical U.S. warning is reconstructed only when at least 55%
+  of its distinctive vocabulary is present; otherwise the supported OCR text is
+  returned rather than inventing the missing language.
+- **Multi-page documents:** Pages and panels are processed independently, and the
+  strongest supported page is selected separately for each field. Front-label
+  identity and back-label regulatory fields may therefore come from different
+  pages. Credible conflicting page values trigger review instead of being merged.
+- **Expected form values:** User-entered values are assumed to be the validation
+  reference. Comparison normalizes case, accents, punctuation, whitespace, and
+  common unit wording, then uses character-sequence similarity; it is not a
+  semantic or legal equivalence test.
+- **Validation verdict:** An image passes only if at least one field has both an
+  entered and extracted value and every comparable field scores at least 85%.
+  Missing entered or extracted values remain visible but do not enter the score;
+  no comparable fields produces a failure. The table labels scores of at least
+  98% as “Match” and at least 80% as “Close match.”
+- **Alcohol Content field:** If the entered Alcohol Content contains the word
+  `proof`, it is compared with extracted proof. Otherwise it is compared with
+  ABV, falling back to proof only when ABV is unavailable.
+- **Batch validation:** The same sidebar reference values are applied to every
+  file in a submitted batch. A heterogeneous batch that requires different
+  expected values should be split into separate runs.
+- **Runtime and caching:** Public deployment assumes CPU inference, sufficient
+  memory, and network access for EasyOCR's initial model download. Exact-input
+  extraction results may be cached using file contents, settings, and source-code
+  fingerprints; changing any of these invalidates the cache.
+- **Human review:** OCR and heuristic parsing are assistive. A PASS verdict is not
+  TTB approval, a legal-compliance determination, or a substitute for reviewing
+  the original label and the extractor's source text/confidence evidence.
+
 ## Install
 
 Python 3.10+ is recommended. Create a virtual environment, activate it, then:
