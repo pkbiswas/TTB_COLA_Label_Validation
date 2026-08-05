@@ -245,5 +245,11 @@ entered in the sidebar. The visually prominent batch button helps distinguish
 this operation from single-image validation. Results can be inspected in the
 application or downloaded as UTF-8 JSON.
 
+The interface has no fixed file-count limit, but Community Cloud batches should
+normally contain 3-5 typical images, 1-3 large, rotated, or multi-page inputs, or
+at most about 10 small images. Each document is limited to 20 pages or frames.
+Split larger submissions into multiple batches because available cloud memory
+and CPU allocation can vary.
+
 Click **Clear** to remove the current sidebar values, uploaded files, and latest
 single and batch validation results.
