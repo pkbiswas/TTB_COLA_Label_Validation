@@ -922,7 +922,9 @@ class COLALabelExtractor:
             horizontal_list=horizontal_list,
             free_list=free_list,
             decoder="greedy",
-            batch_size=1,
+            # Two crops at a time improves CPU latency without the peak-memory
+            # increase of large recognition batches on Streamlit workers.
+            batch_size=2,
             workers=0,
             detail=1,
             paragraph=False,

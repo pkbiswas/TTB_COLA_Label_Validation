@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +39,32 @@ RESULT_FIELDS = (
 )
 
 
-@st.cache_resource(show_spinner="Loading OCR models...")
-def get_single_extractor() -> Any:
-    """Lazily create one OCR reader only after validation is requested."""
+def _build_single_extractor() -> Any:
+    """Construct the shared OCR reader without invoking Streamlit from a worker."""
     from cola_label_extractor import COLALabelExtractor
 
     return COLALabelExtractor(gpu=False)
+
+
+@st.cache_resource(show_spinner=False)
+def get_ocr_warmup() -> Future[Any]:
+    """Start OCR initialization in one background thread and cache its future."""
+    future: Future[Any] = Future()
+
+    def initialize() -> None:
+        """Publish either the initialized reader or its startup exception."""
+        try:
+            future.set_result(_build_single_extractor())
+        except BaseException as exc:
+            future.set_exception(exc)
+
+    threading.Thread(target=initialize, name="cola-ocr-warmup", daemon=True).start()
+    return future
+
+
+def get_single_extractor() -> Any:
+    """Return the warmed shared reader, waiting only if initialization is unfinished."""
+    return get_ocr_warmup().result()
 
 
 @st.cache_resource(show_spinner="Loading batch extractor...")
@@ -79,6 +101,18 @@ def decode_image_bytes(image_bytes: bytes) -> Any:
 
     with Image.open(BytesIO(image_bytes)) as image:
         return pil_to_bgr(image.copy())
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def extract_single_image(
+    image_bytes: bytes, extractor_signature: str
+) -> dict[str, Any]:
+    """Cache OCR by image content and extractor-code fingerprint."""
+    del extractor_signature  # Its value participates in Streamlit's cache key.
+    image = decode_image_bytes(image_bytes)
+    return get_single_extractor().extract_image(
+        image, detailed=True, include_raw_text=True
+    )
 
 
 def process_batch_uploads(
@@ -255,6 +289,9 @@ def render_verdict(verdict: dict[str, Any], subject: str = "Validation") -> None
 def main() -> None:
     """Render the application and dispatch single or batch extraction actions."""
     st.set_page_config(page_title="TTB COLA Label Validator", page_icon="🏷️", layout="wide")
+    # Warm the expensive OCR engine while the user reviews and fills in the form.
+    # Single and batch validation both reuse this same reader.
+    ocr_warmup = get_ocr_warmup()
     st.title("TTB COLA Beverage Label Validator")
     st.write(
         "Upload one label for field-by-field validation, or upload several files "
@@ -264,6 +301,10 @@ def main() -> None:
         "PASS requires every comparable entered/extracted label to reach at least "
         f"{PASS_THRESHOLD:.0%} similarity."
     )
+    if ocr_warmup.done() and ocr_warmup.exception() is None:
+        st.caption("OCR engine ready.")
+    else:
+        st.caption("OCR engine is warming up while you prepare the form.")
     render_example_gallery()
 
     entered, validate_clicked, batch_clicked = render_sidebar_form()
@@ -308,10 +349,9 @@ def main() -> None:
         else:
             try:
                 with st.spinner("Extracting and validating label text..."):
-                    image = decode_image_bytes(source_bytes)
-                    detailed = get_single_extractor().extract_image(
-                        image, detailed=True, include_raw_text=True
-                    )
+                    from batch_label_extractor import pipeline_signature
+
+                    detailed = extract_single_image(source_bytes, pipeline_signature())
                     extracted = flatten_detailed_result(detailed)
                     validation_rows = validate_label_fields(entered, extracted)
                     st.session_state["single_validation"] = {
