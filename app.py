@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import threading
@@ -46,9 +47,16 @@ def _build_single_extractor() -> Any:
     return COLALabelExtractor(gpu=False)
 
 
+def single_extractor_signature() -> str:
+    """Fingerprint OCR source so Streamlit cannot retain an outdated reader."""
+    source = APPLICATION_DIRECTORY / "cola_label_extractor.py"
+    return hashlib.sha256(source.read_bytes()).hexdigest()
+
+
 @st.cache_resource(show_spinner=False)
-def get_ocr_warmup() -> Future[Any]:
+def get_ocr_warmup(extractor_signature: str) -> Future[Any]:
     """Start OCR initialization in one background thread and cache its future."""
+    del extractor_signature  # Its value participates in Streamlit's resource key.
     future: Future[Any] = Future()
 
     def initialize() -> None:
@@ -64,12 +72,13 @@ def get_ocr_warmup() -> Future[Any]:
 
 def get_single_extractor() -> Any:
     """Return the warmed shared reader, waiting only if initialization is unfinished."""
-    return get_ocr_warmup().result()
+    return get_ocr_warmup(single_extractor_signature()).result()
 
 
 @st.cache_resource(show_spinner="Loading batch extractor...")
-def get_batch_extractor() -> Any:
-    """Lazily create the document extractor after batch processing is requested."""
+def get_batch_extractor(extractor_signature: str) -> Any:
+    """Create one document extractor per pipeline version to prevent stale OCR."""
+    del extractor_signature  # Its value participates in Streamlit's resource key.
     from batch_label_extractor import TTBCOLADocumentExtractor
 
     return TTBCOLADocumentExtractor(
@@ -99,7 +108,9 @@ def extract_single_image(
     with tempfile.TemporaryDirectory(prefix="cola_single_") as temporary_directory:
         input_path = Path(temporary_directory) / f"uploaded{suffix}"
         input_path.write_bytes(image_bytes)
-        document = get_batch_extractor().extract(input_path, include_pages=True)
+        document = get_batch_extractor(extractor_signature).extract(
+            input_path, include_pages=True
+        )
     pages = document.get("pages", [])
     if not pages:
         raise ValueError("No readable label page was found in the uploaded image.")
@@ -110,9 +121,10 @@ def process_batch_uploads(
     uploaded_files: list[Any], entered_values: dict[str, str]
 ) -> list[dict[str, Any]]:
     """Extract and validate every uploaded document while retaining failures."""
+    from batch_label_extractor import pipeline_signature
     from cola_label_extractor import release_ocr_memory
 
-    extractor = get_batch_extractor()
+    extractor = get_batch_extractor(pipeline_signature())
     results: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="cola_streamlit_") as temporary_directory:
         temporary_path = Path(temporary_directory)
@@ -282,7 +294,7 @@ def main() -> None:
     st.set_page_config(page_title="TTB COLA Label Validator", page_icon="🏷️", layout="wide")
     # Warm the expensive OCR engine while the user reviews and fills in the form.
     # Single and batch validation both reuse this same reader.
-    ocr_warmup = get_ocr_warmup()
+    ocr_warmup = get_ocr_warmup(single_extractor_signature())
     st.title("TTB COLA Beverage Label Validator")
     st.write(
         "Upload one label for field-by-field validation, or upload several files "

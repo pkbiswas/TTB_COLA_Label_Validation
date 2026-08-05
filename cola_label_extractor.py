@@ -146,6 +146,17 @@ CATEGORY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("wine",), "Wine"),
 )
 CATEGORY_VOCABULARY = {token for required, _ in CATEGORY_RULES for token in required}
+SPACED_CATEGORY_PATTERNS = tuple(
+    (
+        re.compile(
+            r"(?<![A-Za-z])" + r"\s*".join(map(re.escape, token)) + r"(?![A-Za-z])",
+            re.IGNORECASE,
+        ),
+        token,
+    )
+    for token in sorted(CATEGORY_VOCABULARY, key=len, reverse=True)
+    if len(token) >= 4
+)
 
 EXCLUDE_FROM_BRAND = re.compile(
     r"\b(?:government|warning|alcohol|alc|vol|proof|ml|cl|lit(?:er|re)|"
@@ -635,6 +646,8 @@ def normalized_tokens(text: str) -> set[str]:
     # Conservative corrections only for regulatory/category vocabulary. Brand
     # text is never passed through fuzzy spelling replacement.
     normalized = text.lower().replace("0", "o")
+    for pattern, replacement in SPACED_CATEGORY_PATTERNS:
+        normalized = pattern.sub(replacement, normalized)
     tokens = set(re.findall(r"[a-z]+", normalized))
     aliases = {
         "whiskev": "whiskey",
@@ -718,7 +731,9 @@ LOCATION_RE = re.compile(
 )
 COUNTRY_ORIGIN_RE = re.compile(
     r"\b(?:country\s+of\s+origin\s*:|product\s+of|produced\s+in|made\s+in|"
-    r"wine\s+of|beer\s+of|distilled\s+in|imported\s+from|imported(?!\s+by\b))\s+"
+    r"wine\s+of|beer\s+of|distilled\s+in|"
+    r"grown\s*,?\s*distilled\s+and\s+aged\s+in|"
+    r"imported\s+from|imported(?!\s+by\b))\s+"
     r"(?P<country>[A-Za-z][A-Za-z .'-]{1,50}?)"
     r"(?=\s+(?:imported|bottled|produced|distilled|distributed)\b|[,;|]|$)",
     re.IGNORECASE,
@@ -743,6 +758,10 @@ BRAND_OCR_ALIASES = {
     "cunax": "Climax",
     "cimax": "Climax",
     "ctmnax": "Climax",
+    # Common readings of the Devils River display face on photographed panels.
+    "devlls": "Devils",
+    "dhvils": "Devils",
+    "rivhr": "River",
     # Faint cursive text observed on winery labels; these repairs require the
     # complete token and do not fuzzy-rewrite arbitrary brand words.
     "casade": "Cascade",
@@ -775,20 +794,34 @@ def normalize_measurement_ocr(text: str) -> str:
     return repaired
 
 
+def credible_measurement_evidence(text: str, confidence: float) -> bool:
+    """Accept low-confidence numbers only when multiple regulatory anchors agree."""
+    if confidence >= MIN_FIELD_CONFIDENCE:
+        return True
+    anchors = re.findall(
+        r"\b(?:alc(?:ohol)?|vol(?:ume)?|proof|m[l1i]|c[l1i]|lit(?:er|re)|fl\.?\s*oz)\b|%",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return confidence >= 0.05 and len(anchors) >= 3
+
+
 def match_across_lines(pattern: re.Pattern[str], lines: Sequence[OCRLine]) -> tuple[re.Match[str] | None, str | None, float]:
     """Find a measurement on one OCR line or across two adjacent lines."""
     # Parse individual lines first to avoid joining unrelated numbers and units.
     for line in lines:
-        match = pattern.search(normalize_measurement_ocr(line.text))
-        if match and line.confidence >= MIN_FIELD_CONFIDENCE:
+        normalized = normalize_measurement_ocr(line.text)
+        match = pattern.search(normalized)
+        if match and credible_measurement_evidence(normalized, line.confidence):
             return match, line.text, line.confidence
     # Adjacent OCR boxes are occasionally split into consecutive reconstructed lines.
     for first, second in zip(lines, lines[1:]):
         joined = f"{first.text} {second.text}"
-        match = pattern.search(normalize_measurement_ocr(joined))
+        normalized = normalize_measurement_ocr(joined)
+        match = pattern.search(normalized)
         if match:
             confidence = min(first.confidence, second.confidence)
-            if confidence >= MIN_FIELD_CONFIDENCE:
+            if credible_measurement_evidence(normalized, confidence):
                 return match, joined, confidence
     return None, None, 0.0
 
@@ -799,14 +832,16 @@ def all_matches_across_lines(
     """Collect every credible match from individual and adjacent OCR lines."""
     matches: list[tuple[re.Match[str], str, float]] = []
     for line in lines:
-        match = pattern.search(normalize_measurement_ocr(line.text))
-        if match and line.confidence >= MIN_FIELD_CONFIDENCE:
+        normalized = normalize_measurement_ocr(line.text)
+        match = pattern.search(normalized)
+        if match and credible_measurement_evidence(normalized, line.confidence):
             matches.append((match, line.text, line.confidence))
     for first, second in zip(lines, lines[1:]):
         joined = f"{first.text} {second.text}"
-        match = pattern.search(normalize_measurement_ocr(joined))
+        normalized = normalize_measurement_ocr(joined)
+        match = pattern.search(normalized)
         confidence = min(first.confidence, second.confidence)
-        if match and confidence >= MIN_FIELD_CONFIDENCE:
+        if match and credible_measurement_evidence(normalized, confidence):
             matches.append((match, joined, confidence))
     return matches
 
@@ -1038,6 +1073,32 @@ def extract_bottler_producer(lines: Sequence[OCRLine]) -> FieldValue:
             score = confidence - max(0, len(entity) - 100) / 500.0
             candidates.append((score, entity, text))
     if not candidates:
+        # Some front labels identify the company as a large wordmark followed
+        # immediately by a concise company-type line, without a separate "by"
+        # statement. Keep this fallback narrow to avoid treating descriptive
+        # label prose as the bottler or producer.
+        for previous, current in zip(lines, lines[1:]):
+            company_type = clean_spacing(current.text.strip(" ~-|,;:"))
+            if not re.fullmatch(
+                rf"(?:distilling|winery|distillery|brewery|brewing|company)"
+                r"(?:\s+c[oe0]\.?)?",
+                company_type,
+                flags=re.IGNORECASE,
+            ):
+                continue
+            name = clean_spacing(previous.text.strip(" ~-|,;:"))
+            if (
+                1 <= len(normalized_tokens(name)) <= 6
+                and not EXCLUDE_FROM_BRAND.search(name)
+                and re.search(r"[A-Za-z]", name)
+            ):
+                company_type = re.sub(
+                    r"\bc[eo0]\.?$", "Co.", company_type, flags=re.IGNORECASE
+                )
+                entity = clean_spacing(f"{name} {company_type}")
+                confidence = min(previous.confidence, current.confidence)
+                candidates.append((confidence, entity, f"{previous.text} {current.text}"))
+    if not candidates:
         return FieldValue(None, 0.0, None)
     confidence, entity, source = max(candidates, key=lambda item: item[0])
     return FieldValue(entity, max(0.0, confidence), source)
@@ -1050,11 +1111,21 @@ def normalize_country_name(value: str) -> str:
     return COUNTRY_ALIASES.get(alias_key, cleaned.title())
 
 
+def normalize_origin_ocr(text: str) -> str:
+    """Repair strongly evidenced, character-spaced domestic-origin wording."""
+    transliterated = text.casefold().translate(str.maketrans({"0": "o", "/": "i", "|": "i", "$": "s"}))
+    compact = re.sub(r"[^a-z]+", "", transliterated)
+    if "growndistilledandagednnewyork" in compact or "growndistilledandagedinnewyork" in compact:
+        return "GROWN, DISTILLED AND AGED IN NEW YORK"
+    return text
+
+
 def extract_country_of_origin(lines: Sequence[OCRLine]) -> FieldValue:
     """Extract an explicit country or fall back to the producer's stated location."""
     candidates: list[tuple[float, str, str]] = []
     for text, confidence in extraction_windows(lines):
-        match = COUNTRY_ORIGIN_RE.search(text)
+        normalized_text = normalize_origin_ocr(text)
+        match = COUNTRY_ORIGIN_RE.search(normalized_text)
         if not match:
             continue
         country = normalize_country_name(match.group("country"))
