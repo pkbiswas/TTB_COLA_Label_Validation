@@ -303,6 +303,122 @@ def prepare_for_ocr(image: np.ndarray, max_side: int = 2400) -> np.ndarray:
     return cv2.resize(image, None, fx=scale, fy=scale, interpolation=interpolation)
 
 
+def orient_vertical_side_columns(
+    horizontal_list: Sequence[Sequence[float]],
+    image_width: int,
+    image_height: int,
+) -> tuple[list[Sequence[float]], list[list[list[float]]]]:
+    """Rotate detected side-panel columns within the existing OCR pass.
+
+    Flattened COLA artwork can place regulatory copy at 90 degrees along an
+    outer edge. EasyOCR detects those columns as many tall horizontal boxes and
+    consequently reads them as isolated characters. This routine consolidates
+    a connected side paragraph into its original text columns and expresses
+    them as rotated free-form polygons. Recognition therefore still occurs in
+    the same batch and does not add another detection or recognition pass.
+    """
+    boxes = [list(map(float, box)) for box in horizontal_list]
+    if image_width / max(1, image_height) < 1.4:
+        return list(horizontal_list), []
+
+    retained = [True] * len(boxes)
+    rotated_columns: list[list[list[float]]] = []
+    side_width = image_width * 0.15
+
+    for side in ("left", "right"):
+        side_indexes = [
+            index
+            for index, (x0, x1, _, _) in enumerate(boxes)
+            if (x1 <= side_width if side == "left" else x0 >= image_width - side_width)
+        ]
+        portrait_indexes = [
+            index
+            for index in side_indexes
+            if boxes[index][3] - boxes[index][2] > boxes[index][1] - boxes[index][0]
+        ]
+        if len(portrait_indexes) < 5:
+            continue
+
+        # A large merged portrait box is characteristic of adjacent vertical
+        # regulatory lines. Use it as the seed and recover every overlapping
+        # fragment belonging to the same paragraph, excluding nearby barcodes.
+        anchor = max(
+            portrait_indexes,
+            key=lambda index: (
+                (boxes[index][1] - boxes[index][0])
+                * (boxes[index][3] - boxes[index][2])
+                * (0.25 if boxes[index][2] > image_height * 0.80 else 1.0)
+            ),
+        )
+        component = {anchor}
+        changed = True
+        while changed:
+            changed = False
+            for index in side_indexes:
+                if index in component:
+                    continue
+                x0, x1, y0, y1 = boxes[index]
+                if any(
+                    min(x1, boxes[member][1]) > max(x0, boxes[member][0])
+                    and min(y1, boxes[member][3]) > max(y0, boxes[member][2])
+                    for member in component
+                ):
+                    component.add(index)
+                    changed = True
+
+        top = min(boxes[index][2] for index in component)
+        bottom = max(boxes[index][3] for index in component)
+        if len(component) < 5 or bottom - top < image_height * 0.25:
+            continue
+
+        max_column_width = max(32.0, image_width * 0.02)
+        narrow = sorted(
+            (
+                index
+                for index in component
+                if boxes[index][1] - boxes[index][0] <= max_column_width
+                and boxes[index][3] - boxes[index][2] >= 20.0
+            ),
+            key=lambda index: (boxes[index][0] + boxes[index][1]) / 2.0,
+        )
+        clusters: list[list[int]] = []
+        center_tolerance = max(6.0, image_width * 0.004)
+        for index in narrow:
+            center = (boxes[index][0] + boxes[index][1]) / 2.0
+            if clusters:
+                prior_centers = [
+                    (boxes[item][0] + boxes[item][1]) / 2.0 for item in clusters[-1]
+                ]
+                if abs(center - statistics.median(prior_centers)) <= center_tolerance:
+                    clusters[-1].append(index)
+                    continue
+            clusters.append([index])
+        if len(clusters) < 4:
+            continue
+
+        for cluster in clusters:
+            x0 = statistics.median(boxes[index][0] for index in cluster)
+            x1 = statistics.median(boxes[index][1] for index in cluster)
+            if side == "left":
+                # Left-edge label copy conventionally reads bottom-to-top.
+                polygon = [[x0, bottom], [x0, top], [x1, top], [x1, bottom]]
+            else:
+                # Mirror the ordering for top-to-bottom copy on the right edge.
+                polygon = [[x1, top], [x1, bottom], [x0, bottom], [x0, top]]
+            rotated_columns.append(polygon)
+
+        component_left = min(boxes[index][0] for index in component)
+        component_right = max(boxes[index][1] for index in component)
+        for index, (x0, x1, y0, y1) in enumerate(boxes):
+            if (
+                min(x1, component_right) > max(x0, component_left)
+                and min(y1, bottom) > max(y0, top)
+            ):
+                retained[index] = False
+
+    return [horizontal_list[index] for index, keep in enumerate(retained) if keep], rotated_columns
+
+
 def easyocr_to_words(results: Iterable[Any]) -> list[OCRWord]:
     """Convert validated EasyOCR result tuples into typed OCR words."""
     words: list[OCRWord] = []
@@ -363,6 +479,13 @@ def estimate_text_angle(words: Sequence[OCRWord]) -> float:
 def words_to_lines(words: Sequence[OCRWord]) -> list[OCRLine]:
     """Group deskewed OCR boxes into stable reading-order lines."""
     usable = [w for w in words if w.text and w.confidence >= 0.05]
+    vertical = [
+        word
+        for word in usable
+        if word.height >= 2.0 * word.width and len(normalized_tokens(word.text)) >= 2
+    ]
+    vertical_ids = {id(word) for word in vertical}
+    usable = [word for word in usable if id(word) not in vertical_ids]
     usable.sort(key=lambda w: (w.center_y, w.left))
     groups: list[list[OCRWord]] = []
     for word in usable:
@@ -379,6 +502,15 @@ def words_to_lines(words: Sequence[OCRWord]) -> list[OCRLine]:
         else:
             groups[best_index].append(word)
     lines = [OCRLine(tuple(sorted(group, key=lambda w: w.left))) for group in groups]
+    # Consolidated vertical columns form their own logical line. Keeping them
+    # separate prevents their tall polygons from absorbing the central brand
+    # and category into the side-panel paragraph during geometric grouping.
+    for side_words in (
+        [word for word in vertical if word.center_x < 0.5 * max((w.right for w in words), default=0.0)],
+        [word for word in vertical if word.center_x >= 0.5 * max((w.right for w in words), default=0.0)],
+    ):
+        if side_words:
+            lines.append(OCRLine(tuple(sorted(side_words, key=lambda word: word.left))))
     return sorted(lines, key=lambda line: (line.top, line.left))
 
 
@@ -481,6 +613,8 @@ COUNTRY_ORIGIN_RE = re.compile(
     re.IGNORECASE,
 )
 COUNTRY_ALIASES = {
+    "the usa": "United States",
+    "the u s a": "United States",
     "u s a": "United States",
     "usa": "United States",
     "u s": "United States",
@@ -491,7 +625,7 @@ COUNTRY_ALIASES = {
     "republic of korea": "South Korea",
     "korea republic of": "South Korea",
 }
-PRODUCER_SUFFIX = r"(?:winery|distillery|brewery|brewing|company|co\.?|llc|inc\.?)"
+PRODUCER_SUFFIX = r"(?:winery|distillery|distilling|brewery|brewing|company|co\.?|llc|inc\.?)"
 BRAND_OCR_ALIASES = {
     # Common EasyOCR readings of the highly cursive "Climax" wordmark.
     "cunax": "Climax",
@@ -667,7 +801,7 @@ def split_entity_and_location(text: str) -> tuple[str, str | None]:
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0]
-    text = clean_spacing(text.strip(" -|,;:"))
+    text = clean_spacing(text.strip(" ~-|,;:"))
     # OCR can merge a company line with the address below it and sort by x,
     # placing the address first. Restore the conventional entity/address order.
     address_first = re.match(
@@ -943,7 +1077,11 @@ def extract_brand(
     for line in lines:
         text, central_confidence = central_brand_text(line, image_width)
         text = text.strip(" -|_.,:;")
-        tokens = normalized_tokens(text)
+        # Ignore isolated border/ornament characters before comparing a line
+        # with the known category; otherwise ``0 BOURBON`` can leak Bourbon
+        # into an otherwise correct brand name.
+        semantic_text = re.sub(r"(?<!\w)[A-Za-z0-9](?!\w)", " ", text)
+        tokens = normalized_tokens(semantic_text)
         if len(text) < 2 or not re.search(r"[A-Za-z]", text):
             continue
         category_hits = tokens.intersection(CATEGORY_VOCABULARY)
@@ -1041,9 +1179,15 @@ class COLALabelExtractor:
         )
         horizontal_list = horizontal_lists[0] if horizontal_lists else []
         free_list = free_lists[0] if free_lists else []
+        horizontal_list, vertical_columns = orient_vertical_side_columns(
+            horizontal_list,
+            image.shape[1],
+            image.shape[0],
+        )
+        free_list = list(free_list) + vertical_columns
         log_ocr_stage(
             f"recognition boxes ready; horizontal={len(horizontal_list)}; "
-            f"rotated={len(free_list)}"
+            f"rotated={len(free_list)}; vertical-columns={len(vertical_columns)}"
         )
         release_ocr_memory()
         result = self.reader.recognize(
