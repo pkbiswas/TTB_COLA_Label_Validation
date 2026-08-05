@@ -25,7 +25,7 @@ APPLICATION_DIRECTORY = Path(__file__).resolve().parent
 EXAMPLE_IMAGES = (
     ("Old-Tom-Distillery-Bourbon-Warning.png", "Old Tom Distillery Bourbon"),
     ("cascade-winery.jpg", "Cascade Winery"),
-    ("imported_wine.png", "Imported Wine"),
+    ("imported-wine.png", "Imported Wine"),
 )
 RESULT_FIELDS = (
     "brand_name",
