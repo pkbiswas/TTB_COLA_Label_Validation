@@ -164,6 +164,8 @@ the batch entry point keeps one OCR model loaded. Exact-input results are cached
 under `.cola_ocr_cache`; the cache key includes the file contents, settings, and
 extractor source code, so changed inputs or code cannot reuse stale results. Use
 `--no-cache` to force OCR or `--cache-dir PATH` to choose another cache location.
+Decoded page arrays and native inference workspaces are released between pages
+and batch files so long-running public-cloud workers do not accumulate memory.
 
 ## Streamlit validation application
 

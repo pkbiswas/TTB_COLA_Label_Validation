@@ -10,7 +10,7 @@ from typing import Any
 import streamlit as st
 
 from batch_label_extractor import TTBCOLADocumentExtractor, pil_to_bgr
-from cola_label_extractor import COLALabelExtractor
+from cola_label_extractor import COLALabelExtractor, release_ocr_memory
 from label_validation import (
     FIELD_LABELS,
     PASS_THRESHOLD,
@@ -110,6 +110,9 @@ def process_batch_uploads(
                     },
                 }
             results.append(result)
+            # Streamlit keeps this worker alive across every uploaded file;
+            # return native inference workspaces before starting the next one.
+            release_ocr_memory()
     return results
 
 

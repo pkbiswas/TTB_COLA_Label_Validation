@@ -308,21 +308,32 @@ class TTBCOLADocumentExtractor:
                 pass
 
         images = load_document_pages(source, dpi=self.dpi, max_pages=self.max_pages)
+        page_count = len(images)
         page_results: list[dict[str, Any]] = []
-        for index, image in enumerate(images, start=1):
-            page = self.ocr.extract_image(
-                image,
-                rotation="auto",
-                detailed=True,
-                include_raw_text=True,
-            )
-            page["page_number"] = index
-            page_results.append(page)
+        for page_index in range(page_count):
+            image = images[page_index]
+            try:
+                page = self.ocr.extract_image(
+                    image,
+                    rotation="auto",
+                    detailed=True,
+                    include_raw_text=True,
+                )
+                page["page_number"] = page_index + 1
+                page_results.append(page)
+            finally:
+                # A multi-page document must not retain every decoded raster or
+                # native inference workspace until the last page completes.
+                images[page_index] = None
+                del image
+                from cola_label_extractor import release_ocr_memory
+
+                release_ocr_memory()
 
         merged, reasons = merge_page_results(page_results, self.review_threshold)
         result: dict[str, Any] = {
             "source_file": str(source),
-            "page_count": len(images),
+            "page_count": page_count,
             **{field: merged[field]["value"] for field in FIELD_NAMES},
             "field_details": merged,
             "review_required": bool(reasons),

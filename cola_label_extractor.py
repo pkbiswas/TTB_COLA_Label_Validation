@@ -11,6 +11,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import ctypes
 import difflib
 import gc
 import json
@@ -57,6 +58,20 @@ CANONICAL_GOVERNMENT_WARNING = (
 def log_ocr_stage(message: str) -> None:
     """Write a flushed, text-free OCR stage marker for cloud diagnostics."""
     print(f"[COLA OCR] {message}", file=sys.stderr, flush=True)
+
+
+def release_ocr_memory() -> None:
+    """Release unreachable tensors and return free Linux heap pages to the OS."""
+    gc.collect()
+    if sys.platform.startswith("linux"):
+        try:
+            malloc_trim = ctypes.CDLL(None).malloc_trim
+            malloc_trim.argtypes = [ctypes.c_size_t]
+            malloc_trim.restype = ctypes.c_int
+            malloc_trim(0)
+        except (AttributeError, OSError):
+            # Non-glibc platforms still benefit from garbage collection.
+            pass
 
 
 CATEGORY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -901,7 +916,7 @@ class COLALabelExtractor:
             f"recognition boxes ready; horizontal={len(horizontal_list)}; "
             f"rotated={len(free_list)}"
         )
-        gc.collect()
+        release_ocr_memory()
         result = self.reader.recognize(
             image,
             horizontal_list=horizontal_list,
@@ -973,7 +988,7 @@ class COLALabelExtractor:
             angle = self._detect_angle(image)
             # Drop text-detection intermediates before the full OCR pass. This
             # matters in memory-constrained, long-lived Streamlit workers.
-            gc.collect()
+            release_ocr_memory()
         else:
             angle = float(rotation)
 
