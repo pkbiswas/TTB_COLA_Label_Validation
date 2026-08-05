@@ -303,6 +303,117 @@ def prepare_for_ocr(image: np.ndarray, max_side: int = 2400) -> np.ndarray:
     return cv2.resize(image, None, fx=scale, fy=scale, interpolation=interpolation)
 
 
+def order_quadrilateral(points: np.ndarray) -> np.ndarray:
+    """Return quadrilateral corners as top-left, top-right, bottom-right, bottom-left."""
+    points = np.asarray(points, dtype=np.float32).reshape(4, 2)
+    coordinate_sum = points.sum(axis=1)
+    coordinate_difference = np.diff(points, axis=1).ravel()
+    return np.asarray(
+        [
+            points[np.argmin(coordinate_sum)],
+            points[np.argmin(coordinate_difference)],
+            points[np.argmax(coordinate_sum)],
+            points[np.argmax(coordinate_difference)],
+        ],
+        dtype=np.float32,
+    )
+
+
+def isolate_dominant_label_panel(image: np.ndarray) -> tuple[np.ndarray, bool]:
+    """Perspective-rectify the largest panel when a photo contains many labels.
+
+    The trigger requires at least five spatially distinct quadrilateral panels,
+    so ordinary bottle photographs and flattened front/back artwork retain the
+    established whole-image path. Contour analysis is inexpensive and replaces
+    full-scene OCR with OCR of only the dominant label.
+    """
+    height, width = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 130)
+    kernel_size = max(3, round(min(height, width) * 0.012))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    edges = cv2.morphologyEx(
+        edges,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size)),
+    )
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    candidates: list[tuple[float, np.ndarray, tuple[int, int, int, int]]] = []
+    minimum_area = width * height * 0.008
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        perimeter = cv2.arcLength(contour, True)
+        polygon = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+        x, y, box_width, box_height = cv2.boundingRect(contour)
+        if (
+            len(polygon) == 4
+            and cv2.isContourConvex(polygon)
+            and area >= minimum_area
+            and box_width >= width * 0.10
+            and box_height >= height * 0.10
+            and box_width < width * 0.92
+            and box_height < height * 0.92
+            and area / max(1, box_width * box_height) > 0.45
+        ):
+            candidates.append(
+                (area, polygon.reshape(4, 2).astype(np.float32), (x, y, box_width, box_height))
+            )
+
+    # Edge closing can yield nested contours around the same printed panel.
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    distinct: list[tuple[float, np.ndarray, tuple[int, int, int, int]]] = []
+    for candidate in candidates:
+        _, _, (x, y, box_width, box_height) = candidate
+        duplicate = any(
+            abs(x - other_x) < width * 0.05
+            and abs(y - other_y) < height * 0.05
+            and abs(box_width - other_width) < width * 0.08
+            and abs(box_height - other_height) < height * 0.08
+            for _, _, (other_x, other_y, other_width, other_height) in distinct
+        )
+        if not duplicate:
+            distinct.append(candidate)
+    if len(distinct) < 5:
+        return image, False
+
+    corners = order_quadrilateral(distinct[0][1])
+    top_left, top_right, bottom_right, bottom_left = corners
+    output_width = round(
+        max(
+            np.linalg.norm(bottom_right - bottom_left),
+            np.linalg.norm(top_right - top_left),
+        )
+    )
+    output_height = round(
+        max(
+            np.linalg.norm(top_right - bottom_right),
+            np.linalg.norm(top_left - bottom_left),
+        )
+    )
+    if output_width < 100 or output_height < 100:
+        return image, False
+    destination = np.asarray(
+        [
+            [0, 0],
+            [output_width - 1, 0],
+            [output_width - 1, output_height - 1],
+            [0, output_height - 1],
+        ],
+        dtype=np.float32,
+    )
+    matrix = cv2.getPerspectiveTransform(corners, destination)
+    rectified = cv2.warpPerspective(
+        image,
+        matrix,
+        (output_width, output_height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+    return rectified, True
+
+
 def orient_vertical_side_columns(
     horizontal_list: Sequence[Sequence[float]],
     image_width: int,
@@ -586,13 +697,13 @@ VOLUME_RE = re.compile(
 # decorative winery/distillery name from being duplicated as the producer when
 # the label never identifies that organization in a production role.
 BOTTLER_PRODUCER_RE = re.compile(
-    r"\b(?:produced|bott?i?led|distilled|brewed|vinted|cellared|manufactured|made|crafted)"
-    r"(?:[\s.,=|:&/-]+(?:and|&)?\s*(?:produced|bott?i?led|distilled|brewed|vinted|cellared|manufactured|made|crafted))*"
+    r"\b(?:produced|bott?i?led|distilled|brewed|vinted|cellared|manufactured|made|crafted|imported)"
+    r"(?:[\s.,=|:&/-]+(?:and|&)?\s*(?:produced|bott?i?led|distilled|brewed|vinted|cellared|manufactured|made|crafted|imported))*"
     r"[\s.,=|:&/-]+by\b\s*:?\s*[=-]*\s*(?P<entity>.+)",
     re.IGNORECASE,
 )
 ROLE_WORD_RE = re.compile(
-    r"\b(?:produced|bott?i?led|distilled|brewed|vinted|cellared|manufactured|made|crafted)\b",
+    r"\b(?:produced|bott?i?led|distilled|brewed|vinted|cellared|manufactured|made|crafted|imported)\b",
     re.IGNORECASE,
 )
 LOCATION_RE = re.compile(
@@ -607,12 +718,13 @@ LOCATION_RE = re.compile(
 )
 COUNTRY_ORIGIN_RE = re.compile(
     r"\b(?:country\s+of\s+origin\s*:|product\s+of|produced\s+in|made\s+in|"
-    r"wine\s+of|beer\s+of|distilled\s+in|imported\s+from)\s+"
+    r"wine\s+of|beer\s+of|distilled\s+in|imported\s+from|imported(?!\s+by\b))\s+"
     r"(?P<country>[A-Za-z][A-Za-z .'-]{1,50}?)"
     r"(?=\s+(?:imported|bottled|produced|distilled|distributed)\b|[,;|]|$)",
     re.IGNORECASE,
 )
 COUNTRY_ALIASES = {
+    "french": "France",
     "the usa": "United States",
     "the u s a": "United States",
     "u s a": "United States",
@@ -1110,6 +1222,22 @@ def extract_brand(
     candidates.sort(key=lambda pair: pair[0], reverse=True)
     best_score = candidates[0][0]
     selected = [line for score, line in candidates[:3] if score >= best_score * 0.70]
+    if len(selected) == 1:
+        primary = selected[0]
+        continuations = []
+        for _, line in candidates:
+            if line is primary:
+                continue
+            continuation, _ = central_brand_text(line, image_width)
+            vertical_gap = line.top - primary.bottom
+            if (
+                -0.20 * primary.height <= vertical_gap <= 1.20 * primary.height
+                and line.height >= 0.35 * primary.height
+                and re.match(r"^(?:de|del|la|le|of|the)\b", continuation, re.IGNORECASE)
+            ):
+                continuations.append((abs(vertical_gap), line))
+        if continuations:
+            selected.append(min(continuations, key=lambda item: item[0])[1])
     selected.sort(key=lambda line: (line.top, line.left))
     components = [central_brand_text(line, image_width)[0] for line in selected]
     components = [correct_brand_from_repeated_text(component, lines) for component in components]
@@ -1258,7 +1386,14 @@ class COLALabelExtractor:
         elif image.shape[2] == 4:
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         image = prepare_for_ocr(image)
+        image, isolated_panel = isolate_dominant_label_panel(image)
+        if isolated_panel:
+            # Restore useful character scale after perspective cropping while
+            # keeping the same bounded-size OCR pipeline.
+            image = prepare_for_ocr(image)
         log_ocr_stage(f"prepared image {image.shape[1]}x{image.shape[0]}")
+        if isolated_panel:
+            log_ocr_stage("dominant panel isolated from multi-label image")
         if rotation == "auto":
             angle = self._detect_angle(image)
             # Drop text-detection intermediates before the full OCR pass. This
