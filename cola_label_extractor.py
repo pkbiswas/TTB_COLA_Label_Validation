@@ -1256,6 +1256,13 @@ def extract_brand(
     median_height = statistics.median(line.height for line in lines)
     category_tokens = normalized_tokens(category.value or "")
     producer_tokens = normalized_tokens(bottler_producer.value or "")
+    producer_brand_prefix = re.sub(
+        rf"\s+{PRODUCER_SUFFIX}(?:\s+c[oe0]\.?)?$",
+        "",
+        bottler_producer.value or "",
+        flags=re.IGNORECASE,
+    )
+    producer_brand_tokens = normalized_tokens(producer_brand_prefix)
     candidates: list[tuple[float, OCRLine]] = []
     for line in lines:
         text, central_confidence = central_brand_text(line, image_width)
@@ -1271,7 +1278,15 @@ def extract_brand(
         if (
             EXCLUDE_FROM_BRAND.search(text)
             or (tokens and tokens.issubset(category_tokens))
-            or (tokens and producer_tokens and tokens.issubset(producer_tokens))
+            or (
+                tokens
+                and producer_tokens
+                and tokens.issubset(producer_tokens)
+                and not (
+                    producer_brand_tokens
+                    and tokens.issubset(producer_brand_tokens)
+                )
+            )
             or len(category_hits) >= 2
         ):
             continue
