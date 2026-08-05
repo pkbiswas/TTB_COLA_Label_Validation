@@ -45,6 +45,15 @@ except ImportError as exc:  # pragma: no cover - gives a useful CLI error
 # Values below this threshold are kept in raw OCR, but not trusted as fields.
 MIN_FIELD_CONFIDENCE = 0.25
 
+
+def configured_ocr_threads() -> int:
+    """Return a bounded CPU thread count, tolerating an invalid environment value."""
+    try:
+        requested = int(os.environ.get("COLA_OCR_THREADS", "2"))
+    except ValueError:
+        requested = 2
+    return max(1, min(2, requested))
+
 # TTB's mandatory warning. This is used only to repair/reorder a warning when
 # enough of its distinctive words were actually detected in the warning region.
 CANONICAL_GOVERNMENT_WARNING = (
@@ -886,7 +895,7 @@ class COLALabelExtractor:
     def __init__(self, languages: Sequence[str] = ("en",), gpu: bool | str = False) -> None:
         """Initialize one reusable EasyOCR reader for the selected languages."""
         if gpu is False:
-            torch.set_num_threads(1)
+            torch.set_num_threads(configured_ocr_threads())
             try:
                 torch.set_num_interop_threads(1)
             except RuntimeError:
