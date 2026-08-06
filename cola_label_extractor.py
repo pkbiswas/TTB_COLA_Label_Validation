@@ -1080,8 +1080,8 @@ def extract_bottler_producer(lines: Sequence[OCRLine]) -> FieldValue:
         for previous, current in zip(lines, lines[1:]):
             company_type = clean_spacing(current.text.strip(" ~-|,;:"))
             if not re.fullmatch(
-                rf"(?:distilling|winery|distillery|brewery|brewing|company)"
-                r"(?:\s+c[oe0]\.?)?",
+                r"(?:distilling|winery|distillery|brewery|brewing|company)"
+                r"\s+c[oe0]\.?",
                 company_type,
                 flags=re.IGNORECASE,
             ):
