@@ -22,8 +22,7 @@ This project extracts these fields from a photographed beverage label:
 - bottler/producer
 - country of origin
 
-The output is JSON. Missing or insufficiently supported fields are returned as
-`null`; the extractor does not silently invent a brand or warning.
+The output is JSON.
 
 ## Extraction and validation approach
 
@@ -31,9 +30,8 @@ The extractor prepares each TTB COLA image with OpenCV and then uses EasyOCR to
 recover text together with confidence scores and page positions. Field-specific
 rules combine wording, layout, and regulatory context to identify the brand,
 beverage class, ABV, proof, volume, producer/bottler, origin, and government
-warning. Numeric candidates are checked for credible units and ranges, while
-low-confidence, missing, or conflicting evidence is retained for review instead
-of being silently invented.
+warning. Numeric candidates are checked for credible units and ranges, and each
+selected value retains confidence and supporting source text for audit.
 
 ### Handling difficult images
 
@@ -52,15 +50,14 @@ of being silently invented.
 - **Low contrast and small text:** OCR runs at increased magnification and canvas
   resolution, with a lower secondary text-detection threshold for faint text.
   EasyOCR also retries low-contrast text regions with contrast adjustment. OCR
-  confidence is carried into field scoring, and weak candidates are rejected or
-  flagged instead of being treated as reliable values.
+  confidence is carried into field scoring.
 - **Glare, shadows, and curved labels:** There is no destructive glare-removal or
   inpainting step, global binarization, blanket sharpening, or denoising because
   these operations can alter regulatory characters and numbers. The enlarged OCR
   pass, faint-text threshold, spatial grouping, contextual field rules, and
   confidence checks can recover text that remains visible around a reflection.
-  Text fully obscured by glare, severe shadow, curvature, blur, or cropping is
-  reported as missing or low confidence and should be reviewed or re-photographed.
+  Text fully obscured by glare, severe shadow, curvature, blur, or cropping may
+  remain unreadable and require review or re-photographing.
 
 For multi-page COLA documents and batches, every page is processed independently
 and the strongest supported value for each field is selected with its page and
@@ -84,8 +81,7 @@ The implementation relies on the following assumptions:
   described under **Handling difficult images** above.
 - **OCR confidence:** EasyOCR confidence is treated as evidence quality, not a
   probability that a field is legally correct. Field candidates below 0.25 are
-  generally excluded, and document-level values below the default 0.55 review
-  threshold are flagged for review.
+  generally excluded; the default document-level review threshold is 0.55.
 - **Brand and class:** Brand text is assumed to be visually prominent and usually
   located in the central label region. Category/class extraction uses a finite,
   ordered vocabulary plus conservative corrections for observed OCR errors;
@@ -100,7 +96,7 @@ The implementation relies on the following assumptions:
 - **Alcohol measurements:** ABV must be in the plausible range 0.1–100%, and proof
   must be in the range 1–200. Missing proof is not calculated from ABV, and
   missing ABV is not calculated from proof. When both are printed, a difference
-  greater than one proof unit from twice the ABV is flagged for review.
+  greater than one proof unit from twice the ABV is considered inconsistent.
 - **Volume:** A volume must include a recognizable unit such as ml, cl, L, or
   fluid ounces. Common standard ml sizes receive a ranking bonus when OCR
   produces several candidates, but nonstandard printed sizes are still allowed.
@@ -110,7 +106,8 @@ The implementation relies on the following assumptions:
   of its distinctive vocabulary is present; otherwise the supported OCR text is
   returned rather than inventing the missing language.
 - **Multi-page documents:** Front-label identity and back-label regulatory fields
-  may come from different pages. Credible conflicting values trigger review.
+  may come from different pages. Credible conflicting values are not
+  automatically reconciled.
 - **Expected form values:** User-entered values are assumed to be the validation
   reference. Comparison normalizes case, accents, punctuation, whitespace, and
   common unit wording, then uses character-sequence similarity; it is not a
@@ -193,9 +190,39 @@ python batch_label_extractor.py cola.pdf --include-pages --pretty
 python batch_label_extractor.py .\cola-downloads --recursive --pretty --output results.json
 ```
 
-Its output includes page provenance, confidence, conflict checks, missing-field
-notices, and a `review_required` flag. Supported raster
+Its output includes page provenance and per-field confidence. Supported raster
 formats include JPEG, PNG, TIFF, BMP, WebP, GIF, PPM/PGM/PBM, and JPEG 2000.
+
+## Error handling
+
+Errors and uncertain evidence are handled at the narrowest practical scope so
+one problem does not unnecessarily stop an entire validation run:
+
+- **Input checks:** Missing paths, unsupported formats, unreadable or corrupt
+  files, invalid page/frame data, and invalid extraction settings produce clear
+  error messages instead of unhandled tracebacks where the application can
+  recover.
+- **Uncertain extraction:** A field without sufficient visible support is
+  returned as `null`; the extractor does not fabricate missing label text.
+  Low-confidence values, conflicting page evidence, inconsistent ABV/proof, and
+  missing required fields are recorded in diagnostics and review reasons. The
+  detailed batch result exposes these conditions through `review_required`.
+- **Single-image isolation:** The Streamlit application catches extraction and
+  validation exceptions, displays the exception for the active image, and
+  leaves the form available for another upload or retry.
+- **Batch isolation:** A failed file receives its own error result and FAIL
+  verdict while later files continue processing. Successfully completed items
+  remain available in the displayed and downloadable batch output.
+- **Cache recovery:** Missing, truncated, or invalid cached results are ignored
+  and recomputed. Content-, settings-, and code-based cache keys prevent a valid
+  result for different extraction inputs from being reused accidentally.
+- **Resource cleanup:** Image pages and native inference workspaces are released
+  after each item, including failure paths. Adaptive detector sizing and the
+  batch guidance below reduce memory pressure on constrained cloud hosts.
+- **Process-level limits:** An operating-system or container out-of-memory kill
+  can terminate Python before application-level error handling runs. If that
+  occurs, restart the application and retry with fewer or smaller files; the
+  recommended Community Cloud batch sizes appear below.
 
 ## Validation performance optimizations
 
