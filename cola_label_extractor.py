@@ -738,6 +738,10 @@ COUNTRY_ORIGIN_RE = re.compile(
     r"(?=\s+(?:imported|bottled|produced|distilled|distributed)\b|[,;|]|$)",
     re.IGNORECASE,
 )
+NATIONALITY_ORIGIN_RE = re.compile(
+    r"\b(?P<country>French)\b(?=[^\n]{0,60}\b(?:vineyard|wine|products?)\b)",
+    re.IGNORECASE,
+)
 COUNTRY_ALIASES = {
     "french": "France",
     "the usa": "United States",
@@ -1131,6 +1135,16 @@ def extract_country_of_origin(lines: Sequence[OCRLine]) -> FieldValue:
         country = normalize_country_name(match.group("country"))
         if 2 <= len(country) <= 50 and not re.search(r"\d|\b(?:the|this)\s+product\b", country, re.I):
             candidates.append((confidence, country, text))
+    if not candidates:
+        # Some imported wine labels use a nationality adjective rather than a
+        # formal "Product of" statement. Require a wine/product anchor on the
+        # same OCR line so an unrelated use of "French" is not treated as origin.
+        for text, confidence in extraction_windows(lines):
+            match = NATIONALITY_ORIGIN_RE.search(text)
+            if match:
+                candidates.append(
+                    (confidence, normalize_country_name(match.group("country")), text)
+                )
     if not candidates:
         # Some domestic labels state origin through the producer/bottler address
         # rather than a separate country declaration. Preserve that location as
