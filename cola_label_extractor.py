@@ -1431,15 +1431,19 @@ class COLALabelExtractor:
         self.reader = easyocr.Reader(list(languages), gpu=gpu, verbose=False)
         log_ocr_stage("reader ready")
 
-    def _ocr(self, image: np.ndarray) -> list[OCRWord]:
-        """Detect bounded-size text boxes, then recognize original-image crops."""
+    def _ocr(self, image: np.ndarray, *, memory_safe: bool = False) -> list[OCRWord]:
+        """Detect text boxes and recognize crops with an optional low-memory pass."""
+        # Prepared images already have a useful character scale. Batch mode
+        # avoids EasyOCR's additional 1.5x detector enlargement, which can more
+        # than double the detector tensor area and exceed small cloud workers.
+        detector_magnification = 1.25 if memory_safe else 1.5
         horizontal_lists, free_lists = self.reader.detect(
             image,
             min_size=20,
             text_threshold=0.60,
             low_text=0.30,
             canvas_size=2000,
-            mag_ratio=1.5,
+            mag_ratio=detector_magnification,
         )
         horizontal_list = horizontal_lists[0] if horizontal_lists else []
         free_list = free_lists[0] if free_lists else []
@@ -1451,7 +1455,8 @@ class COLALabelExtractor:
         free_list = list(free_list) + vertical_columns
         log_ocr_stage(
             f"recognition boxes ready; horizontal={len(horizontal_list)}; "
-            f"rotated={len(free_list)}; vertical-columns={len(vertical_columns)}"
+            f"rotated={len(free_list)}; vertical-columns={len(vertical_columns)}; "
+            f"memory-safe={memory_safe}"
         )
         release_ocr_memory()
         result = self.reader.recognize(
@@ -1496,6 +1501,7 @@ class COLALabelExtractor:
         rotation: float | str = "auto",
         include_raw_text: bool = False,
         detailed: bool = False,
+        memory_safe: bool = False,
     ) -> dict[str, Any]:
         """Load an image path and extract label fields from its pixels."""
         image = load_image(image_path)
@@ -1504,6 +1510,7 @@ class COLALabelExtractor:
             rotation=rotation,
             include_raw_text=include_raw_text,
             detailed=detailed,
+            memory_safe=memory_safe,
         )
 
     def extract_image(
@@ -1513,6 +1520,7 @@ class COLALabelExtractor:
         rotation: float | str = "auto",
         include_raw_text: bool = False,
         detailed: bool = False,
+        memory_safe: bool = False,
     ) -> dict[str, Any]:
         """Extract fields directly from an OpenCV BGR image array."""
         if not isinstance(image, np.ndarray) or image.ndim not in (2, 3) or image.size == 0:
@@ -1556,7 +1564,16 @@ class COLALabelExtractor:
             f"deskew complete; angle={angle}; OCR image "
             f"{ocr_image.shape[1]}x{ocr_image.shape[0]}"
         )
-        words = self._ocr(ocr_image)
+        projected_scale = min(1.5, 2000.0 / max(ocr_image.shape[:2]))
+        projected_detector_pixels = (
+            ocr_image.shape[0] * ocr_image.shape[1] * projected_scale**2
+        )
+        adaptive_memory_safe = (
+            memory_safe
+            and 2.0 <= abs(angle) < 10.0
+            and projected_detector_pixels >= 2_800_000
+        )
+        words = self._ocr(ocr_image, memory_safe=adaptive_memory_safe)
         log_ocr_stage(f"recognition complete; words={len(words)}")
 
         lines = words_to_lines(words)
@@ -1613,6 +1630,7 @@ def parse_cola_label(
     rotation: float | str = "auto",
     include_raw_text: bool = False,
     detailed: bool = False,
+    memory_safe: bool = False,
 ) -> dict[str, Any]:
     """Convenience API. Reuse ``COLALabelExtractor`` for batches."""
     global _DEFAULT_EXTRACTOR
@@ -1623,6 +1641,7 @@ def parse_cola_label(
         rotation=rotation,
         include_raw_text=include_raw_text,
         detailed=detailed,
+        memory_safe=memory_safe,
     )
 
 
@@ -1638,6 +1657,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpu", action="store_true", help="Use a CUDA GPU if configured")
     parser.add_argument("--detailed", action="store_true", help="Include confidence and OCR evidence")
     parser.add_argument("--include-raw-text", action="store_true", help="Include reconstructed OCR text")
+    parser.add_argument(
+        "--memory-safe",
+        action="store_true",
+        help="Adaptively limit detector upscaling for high-risk images",
+    )
     parser.add_argument("--pretty", action="store_true", help="Indent JSON output")
     return parser
 
@@ -1659,6 +1683,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rotation=rotation,
             include_raw_text=args.include_raw_text,
             detailed=args.detailed,
+            memory_safe=args.memory_safe,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

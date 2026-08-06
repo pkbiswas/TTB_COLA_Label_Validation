@@ -215,9 +215,14 @@ location.
 
 Batch files remain sequential to control peak memory. Decoded pages and native
 inference workspaces are released between items, while detection and recognition
-use bounded canvases and batches. Consequently, a new image still incurs OCR
-time, but repeated content can return immediately without compromising field
-rules, confidence checks, or validation semantics.
+use bounded canvases and batches. Batch detection adaptively limits EasyOCR's
+detector enlargement to 1.25x only when a moderately deskewed image would create
+a detector canvas above roughly 2.8 million pixels. Other batch images and all
+single-image validations retain the higher-resolution 1.5x detector. Recognition
+continues to read the original prepared-image crops. This targets the observed
+cloud memory spike without changing field rules, confidence checks, or normal
+image accuracy. Consequently, a new image still incurs OCR time, while repeated
+content can return immediately from the content-addressed cache.
 
 ## Streamlit validation application
 

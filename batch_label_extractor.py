@@ -275,7 +275,7 @@ class TTBCOLADocumentExtractor:
             self._ocr = COLALabelExtractor(languages=self.languages, gpu=self.gpu)
         return self._ocr
 
-    def _cache_path(self, source: Path) -> Path | None:
+    def _cache_path(self, source: Path, *, memory_safe: bool) -> Path | None:
         """Build a content-addressed cache path for an input and all settings."""
         if self.cache_dir is None:
             return None
@@ -283,7 +283,8 @@ class TTBCOLADocumentExtractor:
         digest.update(self._pipeline_signature.encode("ascii"))
         settings = (
             f"dpi={self.dpi};max_pages={self.max_pages};review={self.review_threshold};"
-            f"languages={','.join(self.languages)};gpu={self.gpu}"
+            f"languages={','.join(self.languages)};gpu={self.gpu};"
+            f"memory_safe={memory_safe}"
         )
         digest.update(settings.encode("utf-8"))
         with source.open("rb") as stream:
@@ -291,10 +292,21 @@ class TTBCOLADocumentExtractor:
                 digest.update(chunk)
         return self.cache_dir / f"{digest.hexdigest()}.json"
 
-    def extract(self, path: str | Path, *, include_pages: bool = False) -> dict[str, Any]:
+    def extract(
+        self,
+        path: str | Path,
+        *,
+        include_pages: bool = False,
+        memory_safe: bool = True,
+    ) -> dict[str, Any]:
         """Extract every page, merge its fields, and return document-level JSON."""
         source = Path(path).expanduser().resolve()
-        cache_path = self._cache_path(source)
+        print(
+            f"[COLA batch] source={source.name}; memory-safe={memory_safe}",
+            file=sys.stderr,
+            flush=True,
+        )
+        cache_path = self._cache_path(source, memory_safe=memory_safe)
         if cache_path and cache_path.is_file():
             try:
                 cached = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -320,6 +332,7 @@ class TTBCOLADocumentExtractor:
                     rotation="auto",
                     detailed=True,
                     include_raw_text=True,
+                    memory_safe=memory_safe,
                 )
                 page["page_number"] = page_index + 1
                 page_results.append(page)

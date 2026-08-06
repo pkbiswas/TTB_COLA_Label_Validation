@@ -108,7 +108,7 @@ def extract_single_image(
         input_path = Path(temporary_directory) / f"uploaded{suffix}"
         input_path.write_bytes(image_bytes)
         document = get_batch_extractor(extractor_signature).extract(
-            input_path, include_pages=True
+            input_path, include_pages=True, memory_safe=False
         )
     pages = document.get("pages", [])
     if not pages:
@@ -132,7 +132,11 @@ def process_batch_uploads(
             input_path = temporary_path / f"{index:04d}_{safe_name}"
             input_path.write_bytes(uploaded_file.getvalue())
             try:
-                result = extractor.extract(input_path, include_pages=False)
+                result = extractor.extract(
+                    input_path,
+                    include_pages=False,
+                    memory_safe=True,
+                )
                 result["source_file"] = safe_name
                 validation_rows = validate_label_fields(entered_values, result)
                 result["validation"] = {
