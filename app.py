@@ -108,7 +108,7 @@ def extract_single_image(
         input_path = Path(temporary_directory) / f"uploaded{suffix}"
         input_path.write_bytes(image_bytes)
         document = get_batch_extractor(extractor_signature).extract(
-            input_path, include_pages=True, memory_safe=False
+            input_path, include_pages=True, memory_safe=True
         )
     pages = document.get("pages", [])
     if not pages:
