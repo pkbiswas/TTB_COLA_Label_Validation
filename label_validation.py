@@ -49,10 +49,12 @@ def similarity(entered: str, extracted: str) -> float:
 
 
 def select_alcohol_content(entered: str, extracted: Mapping[str, Any]) -> str | None:
-    """Choose proof or ABV evidence according to the entered alcohol statement."""
+    """Prefer the entered measurement type, then retain the other as evidence."""
+    proof = extracted.get("proof")
+    abv = extracted.get("abv")
     if re.search(r"\bproof\b", entered, re.IGNORECASE):
-        return extracted.get("proof")
-    return extracted.get("abv") or extracted.get("proof")
+        return proof or abv
+    return abv or proof
 
 
 def validation_status(entered: str, extracted: str | None) -> tuple[str, float]:

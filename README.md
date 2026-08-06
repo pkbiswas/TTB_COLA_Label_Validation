@@ -118,8 +118,10 @@ The implementation relies on the following assumptions:
   no comparable fields produces a failure. The table labels scores of at least
   98% as “Match” and at least 80% as “Close match.”
 - **Alcohol Content field:** If the entered Alcohol Content contains the word
-  `proof`, it is compared with extracted proof. Otherwise it is compared with
-  ABV, falling back to proof only when ABV is unavailable.
+  `proof`, extracted proof is preferred and ABV is shown when proof is absent.
+  Otherwise ABV is preferred, with proof as the fallback. This keeps available
+  alcohol evidence visible; different measurement representations may still
+  produce a mismatch.
 - **Batch validation:** The same sidebar reference values are applied to every
   file in a submitted batch. A heterogeneous batch that requires different
   expected values should be split into separate runs.
