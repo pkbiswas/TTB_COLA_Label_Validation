@@ -248,7 +248,7 @@ def render_sidebar_form() -> tuple[dict[str, str], bool, bool]:
                 ),
                 "abv": st.text_input("ABV", help="Example: 13.5%", key="expected_abv"),
                 "volume": st.text_input(
-                    "Net Contents",
+                    "Net contents",
                     help="Example: 750 ml or 12 fl oz",
                     key="expected_volume",
                 ),

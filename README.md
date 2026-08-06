@@ -97,7 +97,7 @@ The implementation relies on the following assumptions:
   must be in the range 1–200. Missing proof is not calculated from ABV, and
   missing ABV is not calculated from proof. When both are printed, a difference
   greater than one proof unit from twice the ABV is considered inconsistent.
-- **Net Contents:** A volume must include a recognizable unit such as ml, cl, L, or
+- **Net contents:** A volume must include a recognizable unit such as ml, cl, L, or
   fluid ounces. Common standard ml sizes receive a ranking bonus when OCR
   produces several candidates, but nonstandard printed sizes are still allowed.
   Units are normalized for display but quantities are not converted.
@@ -255,7 +255,7 @@ content can return immediately from the content-addressed cache.
 
 The web application in `app.py` supports single-label validation and batch
 processing. Its sidebar accepts expected values for Brand Name, Category / Class
-/ Type, Alcohol Content, ABV, Net Contents, Producer / Bottler, Country of Origin, and
+/ Type, Alcohol Content, ABV, Net contents, Producer / Bottler, Country of Origin, and
 Government Warning. The top of the application provides selectable Old Tom
 Distillery Bourbon, Cascade Winery, and Imported Wine example images for quick
 testing. Selecting an example makes it the active single-image source; users can
