@@ -162,13 +162,26 @@ def process_batch_uploads(
 
 
 def batch_summary(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Build compact rows for displaying a batch without nested OCR evidence."""
+    """Build compact rows, including derived Alcohol Content validation evidence."""
     rows: list[dict[str, Any]] = []
     for result in results:
         row = {"File": Path(str(result.get("source_file", ""))).name}
-        for field in RESULT_FIELDS:
-            row[FIELD_LABELS.get(field, field.replace("_", " ").title())] = result.get(field)
         validation = result.get("validation", {})
+        validation_rows = validation.get("results", [])
+        alcohol_row = next(
+            (
+                item
+                for item in validation_rows
+                if item.get("Label") == FIELD_LABELS["alcohol_content"]
+            ),
+            {},
+        )
+        for field in RESULT_FIELDS:
+            if field == "abv":
+                row[FIELD_LABELS["alcohol_content"]] = alcohol_row.get(
+                    "Extracted value", "—"
+                )
+            row[FIELD_LABELS.get(field, field.replace("_", " ").title())] = result.get(field)
         row["Validation Verdict"] = validation.get("verdict", "FAIL")
         row["Compared Labels"] = validation.get("compared_labels", 0)
         row["Review Required"] = result.get("review_required")

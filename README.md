@@ -278,8 +278,10 @@ PASS/FAIL rules are defined under **Assumptions and limitations**.
 Select several files under **Batch files** and click **Batch processing** to run
 the document/batch extractor. Each file is validated against the values currently
 entered in the sidebar. The visually prominent batch button helps distinguish
-this operation from single-image validation. Results can be inspected in the
-application or downloaded as UTF-8 JSON.
+this operation from single-image validation. The batch summary displays the
+derived Alcohol Content value alongside ABV, including the ABV fallback when
+proof is absent. Results can be inspected in the application or downloaded as
+UTF-8 JSON.
 
 The interface has no fixed file-count limit, but Community Cloud batches should
 normally contain 3-5 typical images, 1-3 large, rotated, or multi-page inputs, or
