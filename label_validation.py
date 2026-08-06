@@ -14,7 +14,7 @@ FIELD_LABELS = {
     "alcohol_content": "Alcohol Content",
     "abv": "ABV",
     # Keep the stable extractor/JSON key while using the regulatory UI wording.
-    "volume": "Net contents",
+    "volume": "Net Contents",
     "bottler_producer": "Producer / Bottler",
     "country_of_origin": "Country of Origin",
     "government_warning": "Government Warning",
