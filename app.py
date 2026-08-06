@@ -177,6 +177,8 @@ def batch_summary(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {},
         )
         for field in RESULT_FIELDS:
+            if field == "proof":
+                continue
             if field == "abv":
                 row[FIELD_LABELS["alcohol_content"]] = alcohol_row.get(
                     "Extracted value", "—"

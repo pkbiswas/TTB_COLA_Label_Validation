@@ -280,8 +280,8 @@ the document/batch extractor. Each file is validated against the values currentl
 entered in the sidebar. The visually prominent batch button helps distinguish
 this operation from single-image validation. The batch summary displays the
 derived Alcohol Content value alongside ABV, including the ABV fallback when
-proof is absent. Results can be inspected in the application or downloaded as
-UTF-8 JSON.
+proof is absent. It omits the redundant Proof column, while the underlying proof
+value remains available in the detailed downloadable UTF-8 JSON.
 
 The interface has no fixed file-count limit, but Community Cloud batches should
 normally contain 3-5 typical images, 1-3 large, rotated, or multi-page inputs, or
