@@ -760,6 +760,7 @@ PRODUCER_SUFFIX = r"(?:winery|distillery|distilling|brewery|brewing|company|co\.
 BRAND_OCR_ALIASES = {
     # Common EasyOCR readings of the highly cursive "Climax" wordmark.
     "cunax": "Climax",
+    "cumnax": "Climax",
     "cimax": "Climax",
     "ctmnax": "Climax",
     # Common readings of the Devils River display face on photographed panels.
@@ -987,6 +988,40 @@ def clean_entity_text(text: str) -> str:
     return entity
 
 
+def trim_repeated_producer_location(entity: str, lines: Sequence[OCRLine]) -> str:
+    """Remove an unpunctuated location after a producer repeated elsewhere.
+
+    OCR can lose the dashes between a bottler name and its city/province. A
+    separately printed producer name supplies strong evidence for the boundary.
+    Company and beverage suffixes are retained so names such as ``Devils River
+    Whiskey`` and ``Great Jones Distilling Co.`` are not shortened.
+    """
+    entity_tokens = re.findall(r"[A-Za-z]+", entity)
+    protected_suffixes = CATEGORY_VOCABULARY | {
+        "company", "co", "corp", "corporation", "inc", "llc",
+        "winery", "distillery", "distilling", "brewery", "brewing",
+    }
+    for line in lines:
+        repeated = clean_spacing(
+            re.sub(r"(?<!\w)[A-Za-z0-9](?!\w)", " ", line.text)
+        ).strip(" ~-|,;:")
+        repeated_tokens = re.findall(r"[A-Za-z]+", repeated)
+        if not 2 <= len(repeated_tokens) <= 6 or EXCLUDE_FROM_BRAND.search(repeated):
+            continue
+        prefix_length = len(repeated_tokens)
+        if [token.casefold() for token in entity_tokens[:prefix_length]] != [
+            token.casefold() for token in repeated_tokens
+        ]:
+            continue
+        remainder = entity_tokens[prefix_length:]
+        if (
+            1 <= len(remainder) <= 3
+            and not {token.casefold() for token in remainder}.intersection(protected_suffixes)
+        ):
+            return repeated
+    return entity
+
+
 def spatial_role_blocks(
     lines: Sequence[OCRLine],
 ) -> list[tuple[float, str, str | None, str]]:
@@ -1071,6 +1106,7 @@ def extract_bottler_producer(lines: Sequence[OCRLine]) -> FieldValue:
         if not match:
             continue
         entity = clean_entity_text(match.group("entity"))
+        entity = trim_repeated_producer_location(entity, lines)
         if len(entity) >= 2 and re.search(r"[A-Za-z]", entity):
             # Prefer higher-confidence evidence and a bounded company/address
             # phrase over a long OCR line containing unrelated content.
