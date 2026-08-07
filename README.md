@@ -17,7 +17,7 @@ This project extracts these fields from a photographed beverage label:
 - category/class
 - alcohol content
 - alcohol by volume (ABV)
-- Net Contents
+- net contents
 - government warning
 - bottler/producer
 - country of origin
@@ -29,10 +29,10 @@ The output is JSON.
 The extractor prepares each TTB COLA image with OpenCV and then uses EasyOCR to
 recover text together with confidence scores and page positions. Field-specific
 rules combine wording, layout, and regulatory context to identify the brand,
-beverage class, alcohol content, ABV, net contents, producer/bottler, origin,
-and government warning. Numeric candidates are checked for credible units and
-ranges, and each
-selected value retains confidence and supporting source text for audit.
+beverage class, alcohol content, ABV, net contents, producer/bottler, country of
+origin, and government warning. Numeric candidates are checked for credible
+units and ranges, and each selected value retains confidence and supporting
+source text for audit.
 
 ### Handling difficult images
 
