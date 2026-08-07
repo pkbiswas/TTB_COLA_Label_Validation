@@ -15,8 +15,8 @@ This project extracts these fields from a photographed beverage label:
 
 - brand name
 - category/class
+- alcohol content
 - alcohol by volume (ABV)
-- proof
 - Net Contents
 - government warning
 - bottler/producer
@@ -29,8 +29,9 @@ The output is JSON.
 The extractor prepares each TTB COLA image with OpenCV and then uses EasyOCR to
 recover text together with confidence scores and page positions. Field-specific
 rules combine wording, layout, and regulatory context to identify the brand,
-beverage class, ABV, proof, volume, producer/bottler, origin, and government
-warning. Numeric candidates are checked for credible units and ranges, and each
+beverage class, alcohol content, ABV, net contents, producer/bottler, origin,
+and government warning. Numeric candidates are checked for credible units and
+ranges, and each
 selected value retains confidence and supporting source text for audit.
 
 ### Handling difficult images
@@ -93,10 +94,11 @@ The implementation relies on the following assumptions:
   statement is preferred. If none exists, `country_of_origin` may contain the
   city/state/postal location attached to the producer/bottler statement, as
   requested by this project; the code does not infer a country from a U.S. state.
-- **Alcohol measurements:** ABV must be in the plausible range 0.1–100%, and proof
-  must be in the range 1–200. Missing proof is not calculated from ABV, and
-  missing ABV is not calculated from proof. When both are printed, a difference
-  greater than one proof unit from twice the ABV is considered inconsistent.
+- **Alcohol measurements:** ABV must be in the plausible range 0.1–100%.
+  Alcohol Content may be printed as ABV or in proof format; printed proof must
+  be in the range 1–200. Missing measurements are not calculated. When both
+  formats are printed, a difference greater than one proof unit from twice the
+  ABV is considered inconsistent.
 - **Net Contents:** A volume must include a recognizable unit such as ml, cl, L, or
   fluid ounces. Common standard ml sizes receive a ranking bonus when OCR
   produces several candidates, but nonstandard printed sizes are still allowed.
@@ -118,10 +120,10 @@ The implementation relies on the following assumptions:
   no comparable fields produces a failure. The table labels scores of at least
   98% as “Match” and at least 80% as “Close match.”
 - **Alcohol Content field:** If the entered Alcohol Content contains the word
-  `proof`, extracted proof is preferred and ABV is shown when proof is absent.
-  Otherwise ABV is preferred, with proof as the fallback. This keeps available
-  alcohol evidence visible; different measurement representations may still
-  produce a mismatch.
+  `proof`, proof-formatted Alcohol Content is preferred and ABV is shown when
+  that format is absent. Otherwise ABV is preferred, with proof-formatted
+  Alcohol Content as the fallback. This keeps available alcohol evidence
+  visible; different measurement representations may still produce a mismatch.
 - **Batch validation:** The same sidebar reference values are applied to every
   file in a submitted batch. A heterogeneous batch that requires different
   expected values should be split into separate runs.
@@ -206,8 +208,9 @@ one problem does not unnecessarily stop an entire validation run:
   recover.
 - **Uncertain extraction:** A field without sufficient visible support is
   returned as `null`; the extractor does not fabricate missing label text.
-  Low-confidence values, conflicting page evidence, inconsistent ABV/proof, and
-  missing required fields are recorded in diagnostics and review reasons. The
+  Low-confidence values, conflicting page evidence, inconsistent alcohol
+  measurements, and missing required fields are recorded in diagnostics and
+  review reasons. The
   detailed batch result exposes these conditions through `review_required`.
 - **Single-image isolation:** The Streamlit application catches extraction and
   validation exceptions, displays the exception for the active image, and
@@ -279,9 +282,9 @@ Select several files under **Batch files** and click **Batch processing** to run
 the document/batch extractor. Each file is validated against the values currently
 entered in the sidebar. The visually prominent batch button helps distinguish
 this operation from single-image validation. The batch summary displays the
-derived Alcohol Content value alongside ABV, including the ABV fallback when
-proof is absent. It omits the redundant Proof column, while the underlying proof
-value remains available in the detailed downloadable UTF-8 JSON.
+derived Alcohol Content value alongside ABV, including an ABV fallback when no
+other alcohol-content statement is available. Detailed measurement evidence
+remains available in the downloadable UTF-8 JSON.
 
 The interface has no fixed file-count limit, but Community Cloud batches should
 normally contain 3-5 typical images, 1-3 large, rotated, or multi-page inputs, or
