@@ -118,7 +118,9 @@ The implementation relies on the following assumptions:
   entered and extracted value and every comparable field scores at least 85%.
   Missing entered or extracted values remain visible but do not enter the score;
   no comparable fields produces a failure. The table labels scores of at least
-  98% as “Match” and at least 80% as “Close match.”
+  98% as “Match,” 85–97.9% as “Close match,” 80–84.9% as “Review,” and below
+  80% as “Mismatch.” Match and Close match satisfy the verdict threshold;
+  Review and Mismatch do not.
 - **Alcohol Content field:** If the entered Alcohol Content contains the word
   `proof`, proof-formatted Alcohol Content is preferred and ABV is shown when
   that format is absent. Otherwise ABV is preferred, with proof-formatted
@@ -275,8 +277,9 @@ python -m streamlit run app.py
 
 Click **Label validation** to run the single-image extractor and compare every
 entered value with OCR evidence. Results distinguish exact matches, close
-matches, mismatches, missing input, and missing OCR evidence. Field mapping and
-PASS/FAIL rules are defined under **Assumptions and limitations**.
+matches, review-level similarities, mismatches, missing input, and missing OCR
+evidence. Field mapping and PASS/FAIL rules are defined under **Assumptions and
+limitations**.
 
 Select several files under **Batch files** and click **Batch processing** to run
 the document/batch extractor. Each file is validated against the values currently

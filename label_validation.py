@@ -58,7 +58,7 @@ def select_alcohol_content(entered: str, extracted: Mapping[str, Any]) -> str | 
 
 
 def validation_status(entered: str, extracted: str | None) -> tuple[str, float]:
-    """Classify a comparison as match, close match, mismatch, or unavailable."""
+    """Classify a comparison consistently with the overall pass threshold."""
     if not entered.strip():
         return "Not entered", 0.0
     if extracted is None or not str(extracted).strip():
@@ -66,8 +66,10 @@ def validation_status(entered: str, extracted: str | None) -> tuple[str, float]:
     score = similarity(entered, str(extracted))
     if score >= 0.98:
         return "Match", score
-    if score >= 0.80:
+    if score >= PASS_THRESHOLD:
         return "Close match", score
+    if score >= 0.80:
+        return "Review", score
     return "Mismatch", score
 
 
@@ -79,6 +81,7 @@ def validate_label_fields(
     icons = {
         "Match": "✅",
         "Close match": "🟨",
+        "Review": "🟧",
         "Mismatch": "❌",
         "Not entered": "➖",
         "Not extracted": "⚠️",
