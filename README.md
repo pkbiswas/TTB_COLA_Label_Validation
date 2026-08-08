@@ -267,7 +267,10 @@ Government Warning. The top of the application provides selectable Old Tom
 Distillery Bourbon, Cascade Winery, and Imported Wine example images for quick
 testing. Selecting an example makes it the active single-image source; users can
 instead choose another committed image from the repository dropdown or upload
-their own image. The active image is displayed in the main body.
+their own image. The active image is displayed in the main body. Single and
+batch modes are mutually exclusive: choosing a batch source clears the active
+single-image preview and result, while choosing a new single source clears the
+current batch selections and result.
 
 Install dependencies and start the application:
 
@@ -287,9 +290,11 @@ Select several files under **Batch files**, choose committed examples under
 processing** to run the document/batch extractor. Each file is validated against
 the values currently entered in the sidebar. Repository and uploaded files use
 the same sequential extraction path, and the batch summary identifies each
-file's source. The visually prominent batch button helps distinguish this
-operation from single-image validation. The batch summary displays the
-derived Alcohol Content value alongside ABV, including an ABV fallback when no
+file's source. The repository multiselect lists every supported image in the
+`images` directory, including the three gallery examples; scroll within the menu
+to view additional choices. The visually prominent batch button helps
+distinguish this operation from single-image validation. The batch summary
+displays the derived Alcohol Content value alongside ABV, including an ABV fallback when no
 other alcohol-content statement is available. Detailed measurement evidence
 remains available in the downloadable UTF-8 JSON.
 
@@ -299,5 +304,7 @@ at most about 10 small images. Each document is limited to 20 pages or frames.
 Split larger submissions into multiple batches because available cloud memory
 and CPU allocation can vary.
 
-Click **Clear** to remove the current sidebar values, uploaded files, and latest
-single and batch validation results.
+Click **Clear** to remove the current sidebar values, uploaded files, repository
+selections, and latest single and batch validation results. The single-image
+dropdown returns to **Select an image...**, and the batch multiselect becomes
+empty.
