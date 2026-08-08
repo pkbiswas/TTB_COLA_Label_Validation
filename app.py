@@ -235,6 +235,9 @@ def select_example_image(filename: str) -> None:
     st.session_state["repository_single_image"] = ""
     st.session_state.pop("single_upload", None)
     st.session_state.pop("single_validation", None)
+    st.session_state.pop("batch_uploads", None)
+    st.session_state.pop("batch_repository_images", None)
+    st.session_state.pop("batch_results", None)
 
 
 def select_repository_image() -> None:
@@ -243,6 +246,9 @@ def select_repository_image() -> None:
         st.session_state.pop("selected_example", None)
         st.session_state.pop("single_upload", None)
         st.session_state.pop("single_validation", None)
+        st.session_state.pop("batch_uploads", None)
+        st.session_state.pop("batch_repository_images", None)
+        st.session_state.pop("batch_results", None)
 
 
 def select_uploaded_image() -> None:
@@ -251,6 +257,9 @@ def select_uploaded_image() -> None:
         st.session_state.pop("selected_example", None)
         st.session_state["repository_single_image"] = ""
         st.session_state.pop("single_validation", None)
+        st.session_state.pop("batch_uploads", None)
+        st.session_state.pop("batch_repository_images", None)
+        st.session_state.pop("batch_results", None)
 
 
 def select_batch_source() -> None:
@@ -417,25 +426,32 @@ def main() -> None:
     )
     source_name: str | None = None
     source_bytes: bytes | None = None
-    if single_upload is not None:
-        source_name = single_upload.name
-        source_bytes = single_upload.getvalue()
-    elif repository_single_image:
-        repository_path = IMAGE_DIRECTORY / Path(repository_single_image).name
-        if repository_path.is_file():
-            source_name = repository_path.name
-            source_bytes = repository_path.read_bytes()
-    elif st.session_state.get("selected_example"):
-        example_name = Path(str(st.session_state["selected_example"])).name
-        example_path = IMAGE_DIRECTORY / example_name
-        if example_path.is_file():
-            source_name = example_name
-            source_bytes = example_path.read_bytes()
+    batch_mode_active = bool(
+        st.session_state.get("batch_uploads")
+        or st.session_state.get("batch_repository_images")
+    )
+    if not batch_mode_active:
+        if single_upload is not None:
+            source_name = single_upload.name
+            source_bytes = single_upload.getvalue()
+        elif repository_single_image:
+            repository_path = IMAGE_DIRECTORY / Path(repository_single_image).name
+            if repository_path.is_file():
+                source_name = repository_path.name
+                source_bytes = repository_path.read_bytes()
+        elif st.session_state.get("selected_example"):
+            example_name = Path(str(st.session_state["selected_example"])).name
+            example_path = IMAGE_DIRECTORY / example_name
+            if example_path.is_file():
+                source_name = example_name
+                source_bytes = example_path.read_bytes()
 
     if source_bytes is not None:
         st.image(source_bytes, caption=source_name, width="stretch")
         if single_upload is None:
             st.success(f"Selected example: {source_name}")
+    elif batch_mode_active:
+        st.info("Batch mode is active. Select files below, then click Batch processing.")
     else:
         st.info("Select an example above or upload a label image to preview and validate it.")
 
