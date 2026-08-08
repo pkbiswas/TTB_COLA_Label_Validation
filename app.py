@@ -208,24 +208,28 @@ def batch_summary(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def clear_application_state() -> None:
     """Clear form widgets, uploads, and the latest single and batch results."""
-    keys = {
-        "expected_brand_name",
-        "expected_category_class",
-        "expected_alcohol_content",
-        "expected_abv",
-        "expected_volume",
-        "expected_bottler_producer",
-        "expected_country_of_origin",
-        "expected_government_warning",
+    widget_defaults = {
+        "expected_brand_name": "",
+        "expected_category_class": "",
+        "expected_alcohol_content": "",
+        "expected_abv": "",
+        "expected_volume": "",
+        "expected_bottler_producer": "",
+        "expected_country_of_origin": "",
+        "expected_government_warning": "",
+        "repository_single_image": "",
+        "batch_repository_images": [],
+    }
+    for key, value in widget_defaults.items():
+        st.session_state[key] = value
+    keys_to_remove = {
         "single_upload",
         "batch_uploads",
-        "batch_repository_images",
-        "repository_single_image",
         "selected_example",
         "single_validation",
         "batch_results",
     }
-    for key in keys:
+    for key in keys_to_remove:
         st.session_state.pop(key, None)
 
 
