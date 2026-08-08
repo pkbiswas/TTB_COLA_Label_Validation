@@ -253,6 +253,17 @@ def select_uploaded_image() -> None:
         st.session_state.pop("single_validation", None)
 
 
+def select_batch_source() -> None:
+    """Activate batch mode and discard the previous single-image state."""
+    if st.session_state.get("batch_uploads") or st.session_state.get(
+        "batch_repository_images"
+    ):
+        st.session_state.pop("selected_example", None)
+        st.session_state["repository_single_image"] = ""
+        st.session_state.pop("single_upload", None)
+        st.session_state.pop("single_validation", None)
+
+
 def repository_image_names() -> tuple[str, ...]:
     """Return supported image filenames committed beside the application."""
     if not IMAGE_DIRECTORY.is_dir():
@@ -435,12 +446,14 @@ def main() -> None:
         accept_multiple_files=True,
         key="batch_uploads",
         help="Select multiple images, PDFs, or multi-frame TIFF files.",
+        on_change=select_batch_source,
     )
     batch_repository_images = st.multiselect(
         "Repository batch images",
         options=repository_image_names(),
         key="batch_repository_images",
         help="Select images committed to the repository's images folder.",
+        on_change=select_batch_source,
     )
     batch_inputs: list[Any] = list(batch_uploads or [])
     batch_inputs.extend(
