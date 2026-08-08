@@ -266,7 +266,8 @@ processing. Its sidebar accepts expected values for Brand Name, Category / Class
 Government Warning. The top of the application provides selectable Old Tom
 Distillery Bourbon, Cascade Winery, and Imported Wine example images for quick
 testing. Selecting an example makes it the active single-image source; users can
-instead upload their own image. The active image is displayed in the main body.
+instead choose another committed image from the repository dropdown or upload
+their own image. The active image is displayed in the main body.
 
 Install dependencies and start the application:
 
@@ -281,10 +282,13 @@ matches, review-level similarities, mismatches, missing input, and missing OCR
 evidence. Field mapping and PASS/FAIL rules are defined under **Assumptions and
 limitations**.
 
-Select several files under **Batch files** and click **Batch processing** to run
-the document/batch extractor. Each file is validated against the values currently
-entered in the sidebar. The visually prominent batch button helps distinguish
-this operation from single-image validation. The batch summary displays the
+Select several files under **Batch files**, choose committed examples under
+**Repository batch images**, or combine both sources, then click **Batch
+processing** to run the document/batch extractor. Each file is validated against
+the values currently entered in the sidebar. Repository and uploaded files use
+the same sequential extraction path, and the batch summary identifies each
+file's source. The visually prominent batch button helps distinguish this
+operation from single-image validation. The batch summary displays the
 derived Alcohol Content value alongside ABV, including an ABV fallback when no
 other alcohol-content statement is available. Detailed measurement evidence
 remains available in the downloadable UTF-8 JSON.

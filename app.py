@@ -23,11 +23,13 @@ from label_validation import (
 SINGLE_IMAGE_TYPES = ["jpg", "jpeg", "jpe", "png", "tif", "tiff", "bmp", "webp"]
 BATCH_TYPES = SINGLE_IMAGE_TYPES + ["pdf", "gif", "ppm", "pgm", "pbm", "jp2"]
 APPLICATION_DIRECTORY = Path(__file__).resolve().parent
+IMAGE_DIRECTORY = APPLICATION_DIRECTORY / "images"
 EXAMPLE_IMAGES = (
     ("Old-Tom-Distillery-Bourbon-Warning.png", "Old Tom Distillery Bourbon"),
     ("cascade-winery.jpg", "Cascade Winery"),
     ("imported-wine.png", "Imported Wine"),
 )
+EXAMPLE_IMAGE_NAMES = frozenset(filename for filename, _ in EXAMPLE_IMAGES)
 RESULT_FIELDS = (
     "brand_name",
     "category_class",
@@ -119,7 +121,7 @@ def extract_single_image(
 def process_batch_uploads(
     uploaded_files: list[Any], entered_values: dict[str, str]
 ) -> list[dict[str, Any]]:
-    """Extract and validate every uploaded document while retaining failures."""
+    """Extract and validate uploaded or repository files while retaining failures."""
     from batch_label_extractor import pipeline_signature
     from cola_label_extractor import release_ocr_memory
 
@@ -128,9 +130,16 @@ def process_batch_uploads(
     with tempfile.TemporaryDirectory(prefix="cola_streamlit_") as temporary_directory:
         temporary_path = Path(temporary_directory)
         for index, uploaded_file in enumerate(uploaded_files):
-            safe_name = Path(uploaded_file.name).name
+            if isinstance(uploaded_file, Path):
+                safe_name = uploaded_file.name
+                file_bytes = uploaded_file.read_bytes()
+                source_type = "Repository"
+            else:
+                safe_name = Path(uploaded_file.name).name
+                file_bytes = uploaded_file.getvalue()
+                source_type = "Upload"
             input_path = temporary_path / f"{index:04d}_{safe_name}"
-            input_path.write_bytes(uploaded_file.getvalue())
+            input_path.write_bytes(file_bytes)
             try:
                 result = extractor.extract(
                     input_path,
@@ -138,6 +147,7 @@ def process_batch_uploads(
                     memory_safe=True,
                 )
                 result["source_file"] = safe_name
+                result["source_type"] = source_type
                 validation_rows = validate_label_fields(entered_values, result)
                 result["validation"] = {
                     **validation_verdict(validation_rows),
@@ -146,6 +156,7 @@ def process_batch_uploads(
             except Exception as exc:  # Keep other uploads moving after one failure.
                 result = {
                     "source_file": safe_name,
+                    "source_type": source_type,
                     "error": f"{type(exc).__name__}: {exc}",
                     "review_required": True,
                     "validation": {
@@ -165,7 +176,10 @@ def batch_summary(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Build compact rows, including derived Alcohol Content validation evidence."""
     rows: list[dict[str, Any]] = []
     for result in results:
-        row = {"File": Path(str(result.get("source_file", ""))).name}
+        row = {
+            "File": Path(str(result.get("source_file", ""))).name,
+            "Source": result.get("source_type", "Upload"),
+        }
         validation = result.get("validation", {})
         validation_rows = validation.get("results", [])
         alcohol_row = next(
@@ -205,6 +219,8 @@ def clear_application_state() -> None:
         "expected_government_warning",
         "single_upload",
         "batch_uploads",
+        "batch_repository_images",
+        "repository_single_image",
         "selected_example",
         "single_validation",
         "batch_results",
@@ -216,8 +232,37 @@ def clear_application_state() -> None:
 def select_example_image(filename: str) -> None:
     """Select a bundled example and discard the previous single-image state."""
     st.session_state["selected_example"] = filename
+    st.session_state["repository_single_image"] = ""
     st.session_state.pop("single_upload", None)
     st.session_state.pop("single_validation", None)
+
+
+def select_repository_image() -> None:
+    """Select a repository image and discard other single-image sources."""
+    if st.session_state.get("repository_single_image"):
+        st.session_state.pop("selected_example", None)
+        st.session_state.pop("single_upload", None)
+        st.session_state.pop("single_validation", None)
+
+
+def select_uploaded_image() -> None:
+    """Select an upload and discard repository-backed single-image sources."""
+    if st.session_state.get("single_upload") is not None:
+        st.session_state.pop("selected_example", None)
+        st.session_state["repository_single_image"] = ""
+        st.session_state.pop("single_validation", None)
+
+
+def repository_image_names() -> tuple[str, ...]:
+    """Return supported image filenames committed beside the application."""
+    if not IMAGE_DIRECTORY.is_dir():
+        return ()
+    supported_suffixes = {f".{item}" for item in SINGLE_IMAGE_TYPES}
+    return tuple(
+        path.name
+        for path in sorted(IMAGE_DIRECTORY.iterdir(), key=lambda item: item.name.lower())
+        if path.is_file() and path.suffix.lower() in supported_suffixes
+    )
 
 
 def render_example_gallery() -> None:
@@ -227,7 +272,7 @@ def render_example_gallery() -> None:
     columns = st.columns(len(EXAMPLE_IMAGES))
     selected = st.session_state.get("selected_example")
     for column, (filename, display_name) in zip(columns, EXAMPLE_IMAGES):
-        image_path = APPLICATION_DIRECTORY / "images" / filename
+        image_path = IMAGE_DIRECTORY / filename
         with column:
             if image_path.is_file():
                 st.image(str(image_path), caption=filename, width="stretch")
@@ -243,6 +288,25 @@ def render_example_gallery() -> None:
                 st.caption(display_name)
             else:
                 st.error(f"Example image is unavailable: {filename}")
+
+
+def render_repository_single_selector() -> str:
+    """Render a compact selector for repository images outside the gallery."""
+    other_images = [
+        filename
+        for filename in repository_image_names()
+        if filename not in EXAMPLE_IMAGE_NAMES
+    ]
+    if not other_images:
+        return ""
+    return st.selectbox(
+        "Other repository image",
+        options=[""] + other_images,
+        format_func=lambda filename: filename or "Select an image...",
+        key="repository_single_image",
+        on_change=select_repository_image,
+        help="Select an image committed to the repository's images folder.",
+    )
 
 
 def render_sidebar_form() -> tuple[dict[str, str], bool, bool]:
@@ -329,6 +393,7 @@ def main() -> None:
     else:
         st.caption("OCR engine is warming up while you prepare the form.")
     render_example_gallery()
+    repository_single_image = render_repository_single_selector()
 
     entered, validate_clicked, batch_clicked = render_sidebar_form()
 
@@ -337,15 +402,21 @@ def main() -> None:
         type=SINGLE_IMAGE_TYPES,
         accept_multiple_files=False,
         key="single_upload",
+        on_change=select_uploaded_image,
     )
     source_name: str | None = None
     source_bytes: bytes | None = None
     if single_upload is not None:
         source_name = single_upload.name
         source_bytes = single_upload.getvalue()
+    elif repository_single_image:
+        repository_path = IMAGE_DIRECTORY / Path(repository_single_image).name
+        if repository_path.is_file():
+            source_name = repository_path.name
+            source_bytes = repository_path.read_bytes()
     elif st.session_state.get("selected_example"):
         example_name = Path(str(st.session_state["selected_example"])).name
-        example_path = APPLICATION_DIRECTORY / "images" / example_name
+        example_path = IMAGE_DIRECTORY / example_name
         if example_path.is_file():
             source_name = example_name
             source_bytes = example_path.read_bytes()
@@ -364,6 +435,16 @@ def main() -> None:
         accept_multiple_files=True,
         key="batch_uploads",
         help="Select multiple images, PDFs, or multi-frame TIFF files.",
+    )
+    batch_repository_images = st.multiselect(
+        "Repository batch images",
+        options=repository_image_names(),
+        key="batch_repository_images",
+        help="Select images committed to the repository's images folder.",
+    )
+    batch_inputs: list[Any] = list(batch_uploads or [])
+    batch_inputs.extend(
+        IMAGE_DIRECTORY / Path(filename).name for filename in batch_repository_images
     )
 
     if validate_clicked:
@@ -398,11 +479,11 @@ def main() -> None:
             st.json(single_result["details"])
 
     if batch_clicked:
-        if not batch_uploads:
+        if not batch_inputs:
             st.error("Select one or more batch files before clicking Batch processing.")
         else:
-            with st.spinner(f"Processing {len(batch_uploads)} file(s)..."):
-                results = process_batch_uploads(list(batch_uploads), entered)
+            with st.spinner(f"Processing {len(batch_inputs)} file(s)..."):
+                results = process_batch_uploads(batch_inputs, entered)
             st.session_state["batch_results"] = results
 
     if st.session_state.get("batch_results"):
